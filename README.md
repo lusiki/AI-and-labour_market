@@ -20,9 +20,9 @@ All three analyses share the same data pipeline. The extraction script (`01_extr
 
 | # | Title | Code | Rendered report |
 |---|-------|------|-----------------|
-| **P1** | The ChatGPT Shock and Media Framing of AI Labour Displacement | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report]() |
-| **P2** | AI Exposure and Media Salience Mismatch | [`05_paper2_occupation_exposure_mismatch.qmd`](R/05_paper2_occupation_exposure_mismatch.qmd) | [HTML report]() |
-| **P3** | Cross-Platform Narrative Propagation in AI Labour Coverage | [`06_paper3_cross_platform_cascades.qmd`](R/06_paper3_cross_platform_cascades.qmd) | [HTML report]() |
+| **P1** | The ChatGPT Shock and Media Framing of AI Labour Displacement | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
+| **P2** | AI Exposure and Media Salience Mismatch | [`05_paper2_occupation_exposure_mismatch.qmd`](R/05_paper2_occupation_exposure_mismatch.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/05_paper2_occupation_exposure_mismatch.html) |
+| **P3** | Cross-Platform Narrative Propagation in AI Labour Coverage | [`06_paper3_cross_platform_cascades.qmd`](R/06_paper3_cross_platform_cascades.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/06_paper3_cross_platform_cascades.html) |
 
 > **Note:** Rendered report links will be populated after reports are built and hosted (e.g. via GitHub Pages). To render locally, run `make papers` or see [Quickstart](#quickstart).
 
