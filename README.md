@@ -16,6 +16,16 @@ All three analyses share the same data pipeline. The extraction script (`01_extr
 
 ---
 
+## Exploratory Data Overview
+
+The descriptive analysis provides a comprehensive overview of the corpus: temporal coverage dynamics, frame prevalence, actor distributions, sentiment trends, and outlet-type comparisons. This serves as the shared empirical foundation for all three research papers below.
+
+| | Title | Code | Rendered report |
+|---|-------|------|-----------------|
+| **EDA** | AI and the Labour Market in Croatian Media -- Exploratory Analysis | [`03_analysis.qmd`](R/03_analysis.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/03_analysis.html) |
+
+---
+
 ## Papers
 
 | # | Title | Code | Rendered report |
@@ -23,8 +33,6 @@ All three analyses share the same data pipeline. The extraction script (`01_extr
 | **P1** | The ChatGPT Shock and Media Framing of AI Labour Displacement | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
 | **P2** | AI Exposure and Media Salience Mismatch | [`05_paper2_occupation_exposure_mismatch.qmd`](R/05_paper2_occupation_exposure_mismatch.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/05_paper2_occupation_exposure_mismatch.html) |
 | **P3** | Cross-Platform Narrative Propagation in AI Labour Coverage | [`06_paper3_cross_platform_cascades.qmd`](R/06_paper3_cross_platform_cascades.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/06_paper3_cross_platform_cascades.html) |
-
-> **Note:** Rendered report links will be populated after reports are built and hosted (e.g. via GitHub Pages). To render locally, run `make papers` or see [Quickstart](#quickstart).
 
 ---
 
