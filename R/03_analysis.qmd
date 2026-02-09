@@ -32,7 +32,7 @@ execute:
 # SETUP — load helpers, config, packages
 # ==============================================================================
 
-source("R/00_helpers.R")
+source("00_helpers.R")
 
 load_packages(c(
   "dplyr", "tidyr", "stringr", "stringi", "lubridate", "forcats", "tibble",

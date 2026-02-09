@@ -2,30 +2,42 @@
 # SHARED HELPERS AND CONFIGURATION LOADER
 # ==============================================================================
 # Source this file at the top of every script to load config and common
-# functions.  Usage:  source("R/00_helpers.R")
+# functions.  Usage:  source("R/00_helpers.R")  OR  source("00_helpers.R")
 # ==============================================================================
+
+# --- Detect project root (works from project root OR from R/ subdirectory) ----
+
+if (file.exists("config.yml")) {
+  PROJECT_ROOT <- "."
+} else if (file.exists("../config.yml")) {
+  PROJECT_ROOT <- ".."
+} else {
+  stop("Cannot find config.yml. Run scripts from the project root or the R/ directory.")
+}
 
 # --- Load configuration ------------------------------------------------------
 
 if (!requireNamespace("yaml", quietly = TRUE)) install.packages("yaml", quiet = TRUE)
 library(yaml)
 
-CONFIG <- yaml::read_yaml("config.yml")
+CONFIG <- yaml::read_yaml(file.path(PROJECT_ROOT, "config.yml"))
 
-# convenience accessors
-path_raw_corpus        <- CONFIG$paths$raw_corpus
-path_diagnostic_corpus <- CONFIG$paths$diagnostic_corpus
-path_analysed_corpus   <- CONFIG$paths$analysed_corpus
-path_figures           <- CONFIG$paths$figures
-path_tables            <- CONFIG$paths$tables
-path_reports           <- CONFIG$paths$reports
-path_database          <- CONFIG$paths$database
+# convenience accessors (all relative to PROJECT_ROOT)
+path_raw_corpus        <- file.path(PROJECT_ROOT, CONFIG$paths$raw_corpus)
+path_diagnostic_corpus <- file.path(PROJECT_ROOT, CONFIG$paths$diagnostic_corpus)
+path_analysed_corpus   <- file.path(PROJECT_ROOT, CONFIG$paths$analysed_corpus)
+path_figures           <- file.path(PROJECT_ROOT, CONFIG$paths$figures)
+path_tables            <- file.path(PROJECT_ROOT, CONFIG$paths$tables)
+path_reports           <- file.path(PROJECT_ROOT, CONFIG$paths$reports)
+path_database          <- CONFIG$paths$database   # absolute path, no prefix needed
 db_table               <- CONFIG$paths$db_table
 
 # --- Ensure output directories exist -----------------------------------------
 
 invisible(lapply(
-  c("data/raw", "data/processed", path_figures, path_tables, path_reports),
+  c(file.path(PROJECT_ROOT, "data/raw"),
+    file.path(PROJECT_ROOT, "data/processed"),
+    path_figures, path_tables, path_reports),
   function(d) if (!dir.exists(d)) dir.create(d, recursive = TRUE)
 ))
 
@@ -91,4 +103,4 @@ log_step <- function(step, total, msg) {
   cat(sprintf("[%d/%d] %s\n", step, total, msg))
 }
 
-cat("Configuration loaded. Project root:", normalizePath("."), "\n")
+cat("Configuration loaded. Project root:", normalizePath(PROJECT_ROOT), "\n")
