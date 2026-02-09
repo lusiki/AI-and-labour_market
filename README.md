@@ -22,7 +22,7 @@ The descriptive analysis provides a comprehensive overview of the corpus: tempor
 
 | | Title | Code | Rendered report |
 |---|-------|------|-----------------|
-| **EDA** | AI and the Labour Market in Croatian Media -- Exploratory Analysis | [`03_analysis.qmd`](R/03_analysis.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/03_analysis.html) |
+| **EDA** | AI and the Labour Market in Croatian Media -- Exploratory Analysis | [`03_analysis.qmd`](R/03_analysis.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/R/03_analysis.html) |
 
 ---
 
