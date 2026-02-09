@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+title: "AI and the Labour Market in Croatian Media: A Framing Analysis"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Sikic
+    given-names: Luka
+    orcid: ""
+repository-code: "https://github.com/lusiki/AI-and-labour_market"
+url: "https://github.com/lusiki/AI-and-labour_market"
+license: MIT
+version: "1.0.0"
+date-released: "2024-01-01"
+keywords:
+  - artificial intelligence
+  - labour market
+  - media framing
+  - Croatia
+  - computational text analysis
+  - digital media
+  - NLP
+abstract: >-
+  Replication code and analytical pipeline for a study of how Croatian digital
+  media frame the intersection of artificial intelligence and the labour market.
+  The analysis covers approximately 20 million media records (2021-2024) from
+  the Determ platform, applying intersection-based corpus extraction, dictionary
+  frame analysis, actor identification, sentiment analysis, and temporal
+  dynamics tracking across eight interpretive frames and six actor categories.

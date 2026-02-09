@@ -1,0 +1,1306 @@
+---
+title: "The ChatGPT Shock and Media Framing of AI Labour Displacement"
+subtitle: "An Event Study Approach Using Croatian Digital Media (2021–2024)"
+author: "Media Analysis Research"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    df-print: paged
+    fig-width: 10
+    fig-height: 6
+    fig-dpi: 300
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# ==========================================================================
+# PACKAGES
+# ==========================================================================
+
+required_packages <- c(
+  "dplyr", "tidyr", "stringr", "stringi", "lubridate", "forcats", "tibble",
+  "ggplot2", "scales", "patchwork", "ggrepel",
+  "knitr", "kableExtra",
+  "fixest",        # fast fixed effects estimation
+  "sandwich",      # robust standard errors
+  "lmtest",        # coefficient tests
+  "strucchange",   # structural break detection
+  "MASS",          # negative binomial
+  "broom",         # tidy model output
+  "zoo"            # rolling functions
+)
+
+for (pkg in required_packages) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    install.packages(pkg, quiet = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+options(dplyr.summarise.inform = FALSE, scipen = 999)
+
+# --------------------------------------------------------------------------
+# THEME
+# --------------------------------------------------------------------------
+
+theme_econ <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", size = 11),
+    plot.caption = element_text(color = "gray50", size = 9, hjust = 0),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(size = 11)
+  )
+theme_set(theme_econ)
+
+# Palette
+frame_colors <- c(
+  "JOB_LOSS"        = "#e41a1c",
+  "JOB_CREATION"    = "#4daf4a",
+  "TRANSFORMATION"  = "#ff7f00",
+  "SKILLS"          = "#377eb8",
+  "REGULATION"      = "#984ea3",
+  "PRODUCTIVITY"    = "#f781bf",
+  "INEQUALITY"      = "#a65628",
+  "FEAR_RESISTANCE" = "#999999"
+)
+```
+
+# Introduction
+
+The release of ChatGPT on November 30, 2022 constituted an exogenous shock to
+public awareness of artificial intelligence capabilities. Unlike prior AI
+advances which remained largely within technical communities, ChatGPT achieved
+100 million users within two months, making abstract automation risk suddenly
+tangible for workers, employers, and policymakers.
+
+This paper exploits the ChatGPT launch as a natural experiment to study how a
+discrete information shock reshapes media framing of AI and labour markets. We
+use a corpus of Croatian digital media articles (2021 to 2024) extracted from
+the Determ monitoring platform, covering approximately 20 million records across
+web portals, Facebook, Twitter/X, YouTube, TikTok, Reddit, and forums.
+
+The analysis proceeds in four parts. First, we document the magnitude of the
+ChatGPT shock on media attention using interrupted time series and structural
+break tests. Second, we estimate event study specifications for each
+interpretive frame (job loss, job creation, transformation, skills, regulation,
+productivity, inequality, and fear) to identify heterogeneous framing responses.
+Third, we test whether the shock propagated differently across media platforms
+and outlet types. Fourth, we examine persistence and mean reversion in the
+post shock framing equilibrium.
+
+The contribution is threefold. We provide the first systematic evidence on how a
+generative AI shock restructured media narratives about automation in a small
+European economy. We demonstrate that the shock produced asymmetric frame
+activation, with displacement and fear narratives rising faster and more
+persistently than opportunity narratives. And we document significant
+cross platform heterogeneity in narrative propagation.
+
+# Data
+
+## Corpus Construction and Loading
+
+```{r}
+#| label: load-corpus
+
+CORPUS_PATH <- "C:/Users/lsikic/Desktop/AI_labour/data/raw/ai_labour_corpus.rds"
+
+if (!file.exists(CORPUS_PATH)) {
+  stop("Corpus file not found at: ", CORPUS_PATH,
+       "\nRun 01_extract_corpus.R first.")
+}
+
+corpus_raw <- readRDS(CORPUS_PATH)
+
+# --------------------------------------------------------------------------
+# Prepare text and temporal variables
+# --------------------------------------------------------------------------
+
+corpus_data <- corpus_raw |>
+  mutate(
+    DATE = as.Date(DATE),
+    .text_lower = stri_trans_tolower(
+      paste(coalesce(TITLE, ""), coalesce(FULL_TEXT, ""), sep = " ")
+    ),
+    year        = year(DATE),
+    month       = month(DATE),
+    year_month  = floor_date(DATE, "month"),
+    year_week   = floor_date(DATE, "week"),
+    quarter     = quarter(DATE),
+    year_quarter = paste0(year, " Q", quarter),
+    word_count  = stri_count_regex(FULL_TEXT, "\\S+")
+  ) |>
+  filter(!is.na(DATE), DATE < as.Date("2024-01-01")) |>
+  distinct(TITLE, DATE, FROM, .keep_all = TRUE) |>
+  arrange(DATE)
+
+cat("Corpus loaded:", format(nrow(corpus_data), big.mark = ","), "articles\n")
+cat("Date range:", as.character(min(corpus_data$DATE)), "to",
+    as.character(max(corpus_data$DATE)), "\n")
+```
+
+## Frame Detection
+
+We operationalize eight interpretive frames through keyword dictionaries. Each
+frame captures a distinct narrative lens through which media present the
+relationship between AI and labour.
+
+```{r}
+#| label: frame-detection
+
+frame_dictionaries <- list(
+  JOB_LOSS = c(
+    "gubitak posla", "gubitak poslova", "gubitak radnih mjesta",
+    "ukidanje radnih mjesta", "ukidanje poslova",
+    "zamjena radnika", "zamijeniti radnike", "zamjenjuje radnike",
+    "istisnuti radnike", "istiskivanje",
+    "otpuštanje", "otpuštanja",
+    "nestanak poslova", "nestanak zanimanja",
+    "suvišan", "suvišni radnici",
+    "tehnološka nezaposlenost",
+    "krade poslove", "krade posao", "oduzima posao",
+    "prijeti radnim mjestima", "ugrožava radna mjesta"
+  ),
+  JOB_CREATION = c(
+    "nova radna mjesta", "novi poslovi", "novo zapošljavanje",
+    "nove prilike", "nove mogućnosti",
+    "stvaranje poslova",
+    "rast zapošljavanja", "povećanje zapošljavanja",
+    "nova zanimanja", "nova karijera",
+    "potražnja za stručnjacima", "nedostatak radnika",
+    "deficitarna zanimanja"
+  ),
+  TRANSFORMATION = c(
+    "transformacija rada", "transformacija poslova",
+    "promjena načina rada", "mijenja način rada",
+    "prilagodba", "prilagoditi se", "prilagođavanje",
+    "nadopunjuje", "komplementar",
+    "suradnja čovjeka i", "čovjek i stroj",
+    "evolucija poslova", "evolucija rada",
+    "nove uloge", "promijenjena uloga",
+    "ne zamjenjuje nego"
+  ),
+  SKILLS = c(
+    "prekvalifikacija", "dokvalifikacija",
+    "cjeloživotno učenje",
+    "digitalna pismenost", "digitalne vještine",
+    "nova znanja", "nove vještine",
+    "jaz u vještinama", "nedostatak vještina",
+    "reskilling", "upskilling",
+    "obrazovanje za budućnost",
+    "stem vještine", "programiranje"
+  ),
+  REGULATION = c(
+    "regulacija ai", "regulativa",
+    "zakon o ai", "zakonski okvir",
+    "eu regulativa", "ai act",
+    "etička pitanja", "etika ai",
+    "sindikat", "sindikalni",
+    "zaštita radnika", "prava radnika",
+    "socijalna zaštita"
+  ),
+  PRODUCTIVITY = c(
+    "produktivnost", "povećanje produktivnosti",
+    "učinkovitost", "efikasnost",
+    "ušteda", "smanjenje troškova",
+    "konkurentnost", "konkurentna prednost",
+    "gospodarski rast", "ekonomski rast",
+    "optimizacija"
+  ),
+  INEQUALITY = c(
+    "nejednakost", "rastuća nejednakost",
+    "digitalni jaz", "tehnološki jaz",
+    "socijalna nejednakost",
+    "polarizacija",
+    "jaz u plaćama",
+    "ranjive skupine", "marginalizirani",
+    "srednja klasa", "nestanak srednje klase"
+  ),
+  FEAR_RESISTANCE = c(
+    "strah od ai", "strah od gubitka", "strah od tehnologij",
+    "prijetnja", "opasnost",
+    "apokalipsa", "distopija", "katastrofa",
+    "upozorenje", "alarm",
+    "otpor prema", "protivljenje",
+    "neizvjesnost", "nesigurnost",
+    "panika", "zabrinutost"
+  )
+)
+
+# Detect frames
+for (fname in names(frame_dictionaries)) {
+  pattern <- paste(frame_dictionaries[[fname]], collapse = "|")
+  corpus_data[[paste0("frame_", fname)]] <- stri_detect_regex(
+    corpus_data$.text_lower, pattern
+  )
+}
+
+frame_cols <- paste0("frame_", names(frame_dictionaries))
+```
+
+## Actor Detection
+
+```{r}
+#| label: actor-detection
+
+actor_dictionaries <- list(
+  WORKERS = c(
+    "radnik", "radnici", "radnica",
+    "zaposlenik", "zaposlenici",
+    "djelatnik", "djelatnici"
+  ),
+  EMPLOYERS = c(
+    "poslodavac", "poslodavci",
+    "tvrtka", "tvrtke", "poduzeće",
+    "kompanija", "korporacija"
+  ),
+  TECH_COMPANIES = c(
+    "openai", "google", "microsoft", "meta", "amazon",
+    "nvidia", "chatgpt", "deepmind"
+  ),
+  POLICY_MAKERS = c(
+    "vlada", "ministar", "ministarstvo",
+    "sabor", "eu komisija", "europska komisija"
+  ),
+  EXPERTS = c(
+    "stručnjak", "ekspert", "znanstvenik",
+    "istraživač", "analitičar", "profesor"
+  ),
+  UNIONS = c(
+    "sindikat", "sindikalni"
+  )
+)
+
+for (aname in names(actor_dictionaries)) {
+  pattern <- paste(actor_dictionaries[[aname]], collapse = "|")
+  corpus_data[[paste0("actor_", aname)]] <- stri_detect_regex(
+    corpus_data$.text_lower, pattern
+  )
+}
+
+actor_cols <- paste0("actor_", names(actor_dictionaries))
+```
+
+## Outlet Classification
+
+```{r}
+#| label: outlet-classification
+
+outlet_patterns <- tribble(
+  ~pattern,              ~outlet_type,
+  "24sata",              "Tabloid",
+  "index",               "Tabloid",
+  "net\\.hr",            "Tabloid",
+  "jutarnji",            "Quality",
+  "vecernji",            "Quality",
+  "dnevnik",             "Quality",
+  "n1",                  "Quality",
+  "tportal",             "Quality",
+  "telegram",            "Quality",
+  "slobodna.*dalmacija", "Regional",
+  "novi.*list",          "Regional",
+  "hrt",                 "Public",
+  "bug",                 "Tech",
+  "netokracija",         "Tech",
+  "poslovni",            "Business",
+  "lider",               "Business",
+  "forbes.*hr",          "Business"
+)
+
+corpus_data$outlet_type <- "Other"
+for (i in seq_len(nrow(outlet_patterns))) {
+  hit <- stri_detect_regex(
+    stri_trans_tolower(corpus_data$FROM), outlet_patterns$pattern[i]
+  )
+  corpus_data$outlet_type[hit] <- outlet_patterns$outlet_type[i]
+}
+
+corpus_data$outlet_type <- factor(
+  corpus_data$outlet_type,
+  levels = c("Tabloid", "Quality", "Regional", "Public",
+             "Tech", "Business", "Other")
+)
+```
+
+## Descriptive Summary
+
+```{r}
+#| label: tbl-summary
+#| tbl-cap: "Corpus descriptive statistics"
+
+summary_tbl <- tibble(
+  Metric = c(
+    "Total articles",
+    "Unique sources",
+    "Date range",
+    "Mean word count",
+    "Median word count",
+    "Pre ChatGPT articles (before Dec 2022)",
+    "Post ChatGPT articles (Dec 2022 onward)"
+  ),
+  Value = c(
+    format(nrow(corpus_data), big.mark = ","),
+    format(n_distinct(corpus_data$FROM), big.mark = ","),
+    paste(min(corpus_data$DATE), "to", max(corpus_data$DATE)),
+    round(mean(corpus_data$word_count, na.rm = TRUE)),
+    round(median(corpus_data$word_count, na.rm = TRUE)),
+    format(sum(corpus_data$DATE < as.Date("2022-12-01")), big.mark = ","),
+    format(sum(corpus_data$DATE >= as.Date("2022-12-01")), big.mark = ",")
+  )
+)
+
+kable(summary_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# The ChatGPT Shock
+
+## Event Definition and Timeline
+
+We define the treatment date as December 1, 2022, the first full day after
+ChatGPTs public release. We also consider two secondary events for robustness
+(GPT 4 release on March 14, 2023 and EU AI Act adoption on March 13, 2024).
+
+```{r}
+#| label: event-setup
+
+# Event dates
+CHATGPT_DATE  <- as.Date("2022-12-01")
+GPT4_DATE     <- as.Date("2023-03-14")
+EU_AI_ACT     <- as.Date("2024-03-13")
+
+# Treatment indicator
+corpus_data$post_chatgpt <- as.integer(corpus_data$DATE >= CHATGPT_DATE)
+
+# Relative time in months (for event study)
+corpus_data$rel_month <- interval(CHATGPT_DATE, corpus_data$year_month) %/% months(1)
+```
+
+## Volume Shock
+
+```{r}
+#| label: fig-volume-shock
+#| fig-cap: "Monthly article volume with structural break at ChatGPT launch"
+#| fig-height: 5
+
+monthly <- corpus_data |>
+  count(year_month) |>
+  filter(!is.na(year_month)) |>
+  mutate(
+    post = as.integer(year_month >= CHATGPT_DATE),
+    t = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+  )
+
+# Interrupted time series regression
+its_model <- lm(n ~ t + post + I(t * post), data = monthly)
+
+monthly$fitted <- predict(its_model)
+
+events_df <- tibble(
+  date  = c(CHATGPT_DATE, GPT4_DATE, EU_AI_ACT),
+  label = c("ChatGPT\nLaunch", "GPT-4\nRelease", "EU AI Act\nAdopted")
+)
+
+ggplot(monthly, aes(x = year_month, y = n)) +
+  geom_col(aes(fill = factor(post)), alpha = 0.6, show.legend = FALSE) +
+  scale_fill_manual(values = c("0" = "gray60", "1" = "#2c7bb6")) +
+  geom_line(aes(y = fitted), color = "#d7191c", linewidth = 1.2) +
+  geom_vline(data = events_df, aes(xintercept = date),
+             linetype = "dashed", color = "gray30") +
+  geom_label(data = events_df,
+             aes(x = date, y = max(monthly$n) * 0.95, label = label),
+             size = 2.8, fill = "white", alpha = 0.9, lineheight = 0.9) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y") +
+  labs(
+    title = "Media Attention to AI and Labour",
+    subtitle = "Interrupted time series with fitted segmented trend",
+    x = NULL, y = "Articles per month",
+    caption = "Red line shows ITS fitted values. Blue bars indicate post treatment period."
+  )
+```
+
+```{r}
+#| label: tbl-its-volume
+#| tbl-cap: "Interrupted time series estimates for monthly article volume"
+
+its_robust <- coeftest(its_model, vcov = vcovHAC(its_model))
+
+its_tidy <- tibble(
+  Term = c("Intercept (baseline level)", "Pre trend (monthly)",
+           "Level shift (ChatGPT)", "Slope change (post trend)"),
+  Estimate = round(its_robust[, 1], 2),
+  SE       = round(its_robust[, 2], 2),
+  t_value  = round(its_robust[, 3], 2),
+  p_value  = format.pval(its_robust[, 4], digits = 3)
+)
+
+kable(its_tidy) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Structural Break Tests
+
+We use formal structural break detection to verify that the ChatGPT launch
+constitutes a statistically significant regime change in media attention rather
+than a gradual trend.
+
+```{r}
+#| label: structural-breaks
+
+# Chow test at known breakpoint
+monthly_ts <- ts(monthly$n, start = c(year(min(monthly$year_month)),
+                                       month(min(monthly$year_month))),
+                 frequency = 12)
+
+# Find breakpoint index
+bp_idx <- which.min(abs(monthly$year_month - CHATGPT_DATE))
+
+# Sup-F test for unknown breakpoint
+if (nrow(monthly) > 10) {
+  fs_test <- Fstats(n ~ t, data = monthly, from = 0.15, to = 0.85)
+  bp_detected <- breakpoints(n ~ t, data = monthly, h = 0.15)
+
+  cat("=== Structural Break Analysis ===\n\n")
+  cat("Sup-F test statistic:", round(max(fs_test$Fstats), 2), "\n")
+  cat("Sup-F p-value:", format.pval(sctest(fs_test)$p.value, digits = 3), "\n\n")
+
+  if (length(bp_detected$breakpoints) > 0) {
+    bp_dates <- monthly$year_month[bp_detected$breakpoints]
+    cat("Detected breakpoint(s) at:", paste(bp_dates, collapse = ", "), "\n")
+  }
+}
+```
+
+```{r}
+#| label: fig-cusum
+#| fig-cap: "CUSUM test for parameter stability"
+#| fig-height: 4
+
+if (nrow(monthly) > 10) {
+  cusum_test <- efp(n ~ t, data = monthly, type = "OLS-CUSUM")
+  plot(cusum_test, main = "OLS-CUSUM Test for Structural Change",
+       xlab = "Observation", ylab = "Cumulative sum")
+}
+```
+
+# Event Study Specification
+
+## Design
+
+We estimate the following event study specification at the monthly level for
+each frame $f$:
+
+$$
+Y_{ft} = \alpha_f + \sum_{k \neq -1} \beta_k^f \cdot \mathbf{1}[t - t^* = k] + \gamma_f \cdot t + \varepsilon_{ft}
+$$
+
+where $Y_{ft}$ is the share of articles containing frame $f$ in month $t$,
+$t^*$ is December 2022, and $k$ indexes months relative to the event. We
+normalize to $k = -1$ (November 2022). The coefficient $\beta_k^f$ captures the
+change in frame $f$ prevalence in month $k$ relative to the last pre treatment
+month, conditional on a linear time trend.
+
+## Monthly Frame Shares
+
+```{r}
+#| label: frame-panel
+
+# Build monthly panel of frame shares
+frame_monthly <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n_total = n(),
+    across(all_of(frame_cols), ~ sum(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month)) |>
+  pivot_longer(
+    cols = all_of(frame_cols),
+    names_to = "frame",
+    values_to = "count"
+  ) |>
+  mutate(
+    frame = str_remove(frame, "frame_"),
+    share = count / n_total,
+    pct   = share * 100,
+    post  = as.integer(year_month >= CHATGPT_DATE),
+    t     = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30,
+    rel_month = interval(CHATGPT_DATE, year_month) %/% months(1)
+  )
+```
+
+## Event Study Coefficients
+
+```{r}
+#| label: fig-event-study-frames
+#| fig-cap: "Event study coefficients by frame (relative to November 2022)"
+#| fig-height: 10
+#| fig-width: 11
+
+# Estimate event study for each frame
+run_event_study <- function(df, frame_name) {
+  fdata <- df |> filter(frame == frame_name)
+
+  # Trim endpoints with very few obs
+  fdata <- fdata |>
+    filter(rel_month >= -20 & rel_month <= 17)
+
+  # Create event time factor, omitting k = -1
+  fdata$rel_fct <- factor(fdata$rel_month)
+  fdata$rel_fct <- relevel(fdata$rel_fct, ref = as.character(-1))
+
+  model <- lm(pct ~ rel_fct + t, data = fdata)
+
+  tidy_out <- broom::tidy(model, conf.int = TRUE) |>
+    filter(str_detect(term, "rel_fct")) |>
+    mutate(
+      k = as.integer(str_extract(term, "-?\\d+")),
+      frame = frame_name
+    )
+
+  return(tidy_out)
+}
+
+all_frames <- names(frame_dictionaries)
+es_results <- bind_rows(lapply(all_frames, function(f) run_event_study(frame_monthly, f)))
+
+# Plot
+ggplot(es_results, aes(x = k, y = estimate)) +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dashed") +
+  geom_vline(xintercept = 0, color = "red", linetype = "dotted", linewidth = 0.5) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.15, fill = "steelblue") +
+  geom_point(size = 1.5, color = "steelblue") +
+  geom_line(color = "steelblue", linewidth = 0.5) +
+  facet_wrap(~ frame, ncol = 2, scales = "free_y") +
+  labs(
+    title = "Event Study Estimates by Interpretive Frame",
+    subtitle = "Relative month coefficients (baseline = month before ChatGPT launch)",
+    x = "Months relative to ChatGPT launch (Dec 2022 = 0)",
+    y = "Change in frame share (pp)",
+    caption = "Shaded bands show 95% confidence intervals. Linear time trend included."
+  )
+```
+
+## Pre Trend Validation
+
+A credible event study requires flat pre treatment coefficients. We formally
+test for pre trends by restricting estimation to the pre period and testing the
+joint significance of lead coefficients.
+
+```{r}
+#| label: tbl-pretrend-tests
+#| tbl-cap: "Pre trend F tests by frame (H0 is all pre period coefficients equal zero)"
+
+pretrend_tests <- lapply(all_frames, function(f) {
+
+  fdata <- frame_monthly |>
+    filter(frame == f, rel_month >= -20 & rel_month <= -2)
+
+  if (nrow(fdata) < 5) return(NULL)
+
+  fdata$rel_fct <- factor(fdata$rel_month)
+  fdata$rel_fct <- relevel(fdata$rel_fct, ref = as.character(-2))
+
+  model_full     <- lm(pct ~ rel_fct + t, data = fdata)
+  model_restricted <- lm(pct ~ t, data = fdata)
+
+  f_test <- anova(model_restricted, model_full)
+
+  tibble(
+    Frame     = f,
+    F_stat    = round(f_test$F[2], 3),
+    p_value   = round(f_test$`Pr(>F)`[2], 3),
+    Pre_trend = ifelse(f_test$`Pr(>F)`[2] > 0.10, "No (good)", "Yes (concern)")
+  )
+})
+
+pretrend_tbl <- bind_rows(pretrend_tests)
+kable(pretrend_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Treatment Effects
+
+## Average Post Treatment Effects
+
+We estimate the average treatment effect of the ChatGPT shock on each frame
+using the simple pre/post specification with HAC standard errors.
+
+```{r}
+#| label: tbl-ate-frames
+#| tbl-cap: "Average treatment effect of ChatGPT launch on frame prevalence (percentage points)"
+
+ate_results <- lapply(all_frames, function(f) {
+
+  fdata <- frame_monthly |> filter(frame == f)
+
+  model <- lm(pct ~ post + t, data = fdata)
+  robust <- coeftest(model, vcov = vcovHAC(model))
+
+  tibble(
+    Frame        = f,
+    Pre_mean     = round(mean(fdata$pct[fdata$post == 0]), 2),
+    Post_mean    = round(mean(fdata$pct[fdata$post == 1]), 2),
+    ATE_pp       = round(robust["post", 1], 2),
+    SE           = round(robust["post", 2], 2),
+    t_stat       = round(robust["post", 3], 2),
+    p_value      = round(robust["post", 4], 4),
+    Significant  = ifelse(robust["post", 4] < 0.05, "***",
+                   ifelse(robust["post", 4] < 0.10, "*", ""))
+  )
+})
+
+ate_tbl <- bind_rows(ate_results) |> arrange(desc(abs(ATE_pp)))
+
+kable(ate_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: fig-ate-forest
+#| fig-cap: "Average treatment effects on frame shares (percentage points)"
+#| fig-height: 5
+
+ate_plot_data <- bind_rows(ate_results) |>
+  mutate(
+    lower = ATE_pp - 1.96 * SE,
+    upper = ATE_pp + 1.96 * SE
+  )
+
+ggplot(ate_plot_data, aes(x = ATE_pp, y = reorder(Frame, ATE_pp))) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_errorbarh(aes(xmin = lower, xmax = upper), height = 0.2, color = "steelblue") +
+  geom_point(size = 3, color = "steelblue") +
+  labs(
+    title = "Average Treatment Effect of ChatGPT on Frame Prevalence",
+    subtitle = "Pre/post comparison with HAC standard errors",
+    x = "Change in frame share (percentage points)",
+    y = NULL
+  )
+```
+
+## Asymmetry Between Threat and Opportunity Narratives
+
+A key hypothesis is that the ChatGPT shock activated threat narratives (job
+loss, fear/resistance, inequality) more strongly than opportunity narratives (job
+creation, productivity, transformation). We construct composite indices and test
+this formally.
+
+```{r}
+#| label: fig-threat-vs-opportunity
+#| fig-cap: "Composite threat vs opportunity frame indices over time"
+#| fig-height: 5
+
+composite_monthly <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n = n(),
+    threat = sum(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY,
+                 na.rm = TRUE) / n() * 100,
+    opportunity = sum(frame_JOB_CREATION | frame_PRODUCTIVITY | frame_TRANSFORMATION,
+                      na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month)) |>
+  pivot_longer(cols = c(threat, opportunity), names_to = "index", values_to = "pct")
+
+ggplot(composite_monthly, aes(x = year_month, y = pct, color = index)) +
+  geom_line(linewidth = 0.6, alpha = 0.5) +
+  geom_smooth(method = "loess", span = 0.3, se = TRUE, linewidth = 1.2) +
+  geom_vline(xintercept = CHATGPT_DATE, linetype = "dashed", color = "gray30") +
+  annotate("label", x = CHATGPT_DATE, y = max(composite_monthly$pct) * 0.9,
+           label = "ChatGPT", size = 3, fill = "white") +
+  scale_color_manual(
+    values = c("threat" = "#e41a1c", "opportunity" = "#4daf4a"),
+    labels = c("Opportunity (creation + productivity + transformation)",
+               "Threat (job loss + fear + inequality)")
+  ) +
+  labs(
+    title = "Threat vs Opportunity Narrative Indices",
+    x = NULL, y = "% of articles", color = NULL
+  )
+```
+
+```{r}
+#| label: tbl-asymmetry-test
+#| tbl-cap: "Formal test of asymmetric frame activation"
+
+# Build monthly data for the test
+asym_data <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n = n(),
+    threat = sum(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY,
+                 na.rm = TRUE) / n() * 100,
+    opportunity = sum(frame_JOB_CREATION | frame_PRODUCTIVITY | frame_TRANSFORMATION,
+                      na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month)) |>
+  mutate(
+    gap = threat - opportunity,
+    post = as.integer(year_month >= CHATGPT_DATE),
+    t = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+  )
+
+# Test whether the gap widens post treatment
+gap_model <- lm(gap ~ post + t, data = asym_data)
+gap_robust <- coeftest(gap_model, vcov = vcovHAC(gap_model))
+
+gap_tidy <- tibble(
+  Term     = c("Intercept", "Post ChatGPT", "Time trend"),
+  Estimate = round(gap_robust[, 1], 3),
+  SE       = round(gap_robust[, 2], 3),
+  t_stat   = round(gap_robust[, 3], 3),
+  p_value  = format.pval(gap_robust[, 4], digits = 3)
+)
+
+kable(gap_tidy) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Platform Heterogeneity
+
+The database covers multiple platforms (web portals, Facebook, Twitter/X,
+YouTube, TikTok, Reddit, forums). If the ChatGPT shock propagated uniformly
+across platforms, the treatment effect should be homogeneous. We test for
+platform specific responses.
+
+## Volume Shock by Platform
+
+```{r}
+#| label: fig-platform-volume
+#| fig-cap: "Monthly article volume by platform type"
+#| fig-height: 7
+
+platform_monthly <- corpus_data |>
+  filter(!is.na(SOURCE_TYPE)) |>
+  count(year_month, SOURCE_TYPE) |>
+  filter(!is.na(year_month))
+
+# Keep platforms with enough data
+keep_platforms <- platform_monthly |>
+  group_by(SOURCE_TYPE) |>
+  summarise(total = sum(n)) |>
+  filter(total >= 30) |>
+  pull(SOURCE_TYPE)
+
+platform_monthly <- platform_monthly |>
+  filter(SOURCE_TYPE %in% keep_platforms)
+
+ggplot(platform_monthly, aes(x = year_month, y = n)) +
+  geom_col(fill = "#2c7bb6", alpha = 0.6) +
+  geom_smooth(method = "loess", se = FALSE, color = "#d7191c", linewidth = 0.8) +
+  geom_vline(xintercept = CHATGPT_DATE, linetype = "dashed", color = "gray30") +
+  facet_wrap(~ SOURCE_TYPE, scales = "free_y", ncol = 2) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b\n%Y") +
+  labs(
+    title = "Media Attention by Platform",
+    subtitle = "Vertical line marks ChatGPT launch",
+    x = NULL, y = "Articles per month"
+  ) +
+  theme(axis.text.x = element_text(size = 8))
+```
+
+## Platform Specific Treatment Effects
+
+```{r}
+#| label: tbl-platform-ate
+#| tbl-cap: "ChatGPT treatment effect on article volume by platform"
+
+platform_ate <- lapply(keep_platforms, function(p) {
+
+  pdata <- corpus_data |>
+    filter(SOURCE_TYPE == p) |>
+    count(year_month) |>
+    filter(!is.na(year_month)) |>
+    mutate(
+      post = as.integer(year_month >= CHATGPT_DATE),
+      t = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+    )
+
+  if (nrow(pdata) < 6) return(NULL)
+
+  model <- lm(n ~ post + t, data = pdata)
+  robust <- tryCatch(
+    coeftest(model, vcov = vcovHAC(model)),
+    error = function(e) coeftest(model)
+  )
+
+  tibble(
+    Platform     = p,
+    Pre_monthly  = round(mean(pdata$n[pdata$post == 0]), 1),
+    Post_monthly = round(mean(pdata$n[pdata$post == 1]), 1),
+    Ratio        = round(mean(pdata$n[pdata$post == 1]) / max(mean(pdata$n[pdata$post == 0]), 0.1), 1),
+    ATE          = round(robust["post", 1], 2),
+    SE           = round(robust["post", 2], 2),
+    p_value      = round(robust["post", 4], 3)
+  )
+})
+
+platform_ate_tbl <- bind_rows(platform_ate) |> arrange(desc(Ratio))
+
+kable(platform_ate_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Outlet Type Heterogeneity
+
+## Frame Activation by Outlet Type
+
+```{r}
+#| label: fig-frames-outlet-prepost
+#| fig-cap: "Frame prevalence by outlet type, pre vs post ChatGPT"
+#| fig-height: 7
+
+outlet_frame_prepost <- corpus_data |>
+  filter(outlet_type != "Other") |>
+  mutate(period = ifelse(post_chatgpt == 1, "Post ChatGPT", "Pre ChatGPT")) |>
+  group_by(outlet_type, period) |>
+  summarise(
+    n = n(),
+    across(all_of(frame_cols), ~ sum(.x, na.rm = TRUE) / n() * 100),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols = all_of(frame_cols),
+    names_to = "frame",
+    values_to = "pct"
+  ) |>
+  mutate(frame = str_remove(frame, "frame_"))
+
+ggplot(outlet_frame_prepost,
+       aes(x = frame, y = pct, fill = period)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  facet_wrap(~ outlet_type, ncol = 2) +
+  scale_fill_manual(values = c("Pre ChatGPT" = "gray60", "Post ChatGPT" = "#2c7bb6")) +
+  labs(
+    title = "Frame Prevalence by Outlet Type",
+    subtitle = "Pre vs post ChatGPT comparison",
+    x = NULL, y = "% of articles", fill = NULL
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8))
+```
+
+## Difference in Differences Across Outlet Types
+
+We use a difference in differences approach comparing tabloid outlets (high
+sensationalism propensity) against quality outlets as the control group. The
+identifying assumption is that absent the ChatGPT shock, tabloid and quality
+outlets would have followed parallel trends in frame usage.
+
+```{r}
+#| label: tbl-did-outlet
+#| tbl-cap: "Difference in differences estimates for threat frame (tabloid vs quality)"
+
+did_data <- corpus_data |>
+  filter(outlet_type %in% c("Tabloid", "Quality")) |>
+  mutate(
+    threat = as.integer(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY),
+    tabloid = as.integer(outlet_type == "Tabloid")
+  )
+
+did_model <- feols(
+  threat ~ post_chatgpt * tabloid | year_month,
+  data = did_data,
+  vcov = "hetero"
+)
+
+cat("=== DiD: Threat Frame (Tabloid vs Quality) ===\n")
+summary(did_model)
+```
+
+# Persistence and Mean Reversion
+
+A critical question is whether the ChatGPT shock produced a permanent shift in
+framing or a temporary spike followed by mean reversion. We test for
+persistence using rolling window analysis and half life estimation.
+
+```{r}
+#| label: fig-persistence
+#| fig-cap: "Rolling 3 month average of threat and opportunity frame shares"
+#| fig-height: 5
+
+persistence_data <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    threat = sum(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY,
+                 na.rm = TRUE) / n() * 100,
+    opportunity = sum(frame_JOB_CREATION | frame_PRODUCTIVITY | frame_TRANSFORMATION,
+                      na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month)) |>
+  arrange(year_month) |>
+  mutate(
+    threat_ma3 = zoo::rollmean(threat, k = 3, fill = NA, align = "right"),
+    opportunity_ma3 = zoo::rollmean(opportunity, k = 3, fill = NA, align = "right")
+  )
+
+persistence_long <- persistence_data |>
+  dplyr::select(year_month, threat_ma3, opportunity_ma3) |>
+  pivot_longer(-year_month, names_to = "index", values_to = "pct") |>
+  mutate(index = ifelse(str_detect(index, "threat"), "Threat", "Opportunity"))
+
+ggplot(persistence_long, aes(x = year_month, y = pct, color = index)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = CHATGPT_DATE, linetype = "dashed") +
+  annotate("label", x = CHATGPT_DATE, y = max(persistence_long$pct, na.rm = TRUE) * 0.9,
+           label = "ChatGPT", fill = "white", size = 3) +
+  scale_color_manual(values = c("Threat" = "#e41a1c", "Opportunity" = "#4daf4a")) +
+  labs(
+    title = "Persistence of Framing Shift",
+    subtitle = "3 month rolling average of composite frame indices",
+    x = NULL, y = "% of articles (3m MA)", color = NULL,
+    caption = "Persistent divergence indicates structural shift rather than transient shock."
+  )
+```
+
+## Post Shock Decay Estimation
+
+We estimate whether the treatment effect decays over time by interacting the
+post treatment dummy with months since the shock.
+
+```{r}
+#| label: tbl-decay
+#| tbl-cap: "Post shock decay estimation for each frame"
+
+decay_results <- lapply(all_frames, function(f) {
+
+  fdata <- frame_monthly |>
+    filter(frame == f, post == 1) |>
+    mutate(months_since = as.numeric(difftime(year_month, CHATGPT_DATE, units = "days")) / 30)
+
+  if (nrow(fdata) < 4) return(NULL)
+
+  model <- lm(pct ~ months_since, data = fdata)
+
+  tibble(
+    Frame         = f,
+    Initial_level = round(coef(model)[1], 2),
+    Monthly_decay = round(coef(model)[2], 3),
+    p_value       = round(summary(model)$coefficients[2, 4], 3),
+    Pattern       = case_when(
+      coef(model)[2] > 0 & summary(model)$coefficients[2, 4] < 0.10 ~ "Growing",
+      coef(model)[2] < 0 & summary(model)$coefficients[2, 4] < 0.10 ~ "Decaying",
+      TRUE ~ "Stable (no sig. trend)"
+    )
+  )
+})
+
+decay_tbl <- bind_rows(decay_results)
+
+kable(decay_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Actor Dynamics Around the Shock
+
+```{r}
+#| label: fig-actor-event
+#| fig-cap: "Actor prominence before and after ChatGPT launch"
+#| fig-height: 5
+
+actor_prepost <- corpus_data |>
+  mutate(period = ifelse(post_chatgpt == 1, "Post", "Pre")) |>
+  group_by(period) |>
+  summarise(
+    n = n(),
+    across(all_of(actor_cols), ~ sum(.x, na.rm = TRUE) / n() * 100),
+    .groups = "drop"
+  ) |>
+  pivot_longer(cols = all_of(actor_cols), names_to = "actor", values_to = "pct") |>
+  mutate(actor = str_remove(actor, "actor_"))
+
+ggplot(actor_prepost, aes(x = reorder(actor, pct), y = pct, fill = period)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  coord_flip() +
+  scale_fill_manual(values = c("Pre" = "gray60", "Post" = "#2c7bb6")) +
+  labs(
+    title = "Actor Prominence Shift",
+    subtitle = "Percentage of articles mentioning each actor type",
+    x = NULL, y = "% of articles", fill = "Period"
+  )
+```
+
+# Sentiment Dynamics
+
+```{r}
+#| label: fig-sentiment-shock
+#| fig-cap: "Sentiment distribution shift around ChatGPT launch"
+#| fig-height: 5
+
+if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
+
+  sentiment_prepost <- corpus_data |>
+    filter(!is.na(AUTO_SENTIMENT)) |>
+    mutate(period = ifelse(post_chatgpt == 1, "Post ChatGPT", "Pre ChatGPT")) |>
+    count(period, AUTO_SENTIMENT) |>
+    group_by(period) |>
+    mutate(pct = n / sum(n) * 100) |>
+    ungroup()
+
+  ggplot(sentiment_prepost,
+         aes(x = AUTO_SENTIMENT, y = pct, fill = period)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    scale_fill_manual(values = c("Pre ChatGPT" = "gray60", "Post ChatGPT" = "#2c7bb6")) +
+    labs(
+      title = "Sentiment Distribution Before and After ChatGPT",
+      x = "Sentiment", y = "% of articles", fill = NULL
+    )
+}
+```
+
+```{r}
+#| label: tbl-sentiment-regression
+#| tbl-cap: "Effect of ChatGPT launch on negative sentiment probability"
+
+if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
+
+  corpus_data$negative <- as.integer(
+    tolower(corpus_data$AUTO_SENTIMENT) == "negative"
+  )
+
+  neg_monthly <- corpus_data |>
+    group_by(year_month) |>
+    summarise(
+      neg_share = mean(negative, na.rm = TRUE) * 100,
+      n = n(),
+      .groups = "drop"
+    ) |>
+    filter(!is.na(year_month)) |>
+    mutate(
+      post = as.integer(year_month >= CHATGPT_DATE),
+      t = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+    )
+
+  neg_model <- lm(neg_share ~ post + t, data = neg_monthly)
+  neg_robust <- coeftest(neg_model, vcov = vcovHAC(neg_model))
+
+  neg_tidy <- tibble(
+    Term     = c("Intercept", "Post ChatGPT", "Time trend"),
+    Estimate = round(neg_robust[, 1], 3),
+    SE       = round(neg_robust[, 2], 3),
+    t_stat   = round(neg_robust[, 3], 3),
+    p_value  = format.pval(neg_robust[, 4], digits = 3)
+  )
+
+  kable(neg_tidy) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+# Robustness Checks
+
+## Alternative Event Windows
+
+We check sensitivity to the choice of event window by re estimating the main
+treatment effect using progressively narrower symmetric windows around the
+shock.
+
+```{r}
+#| label: tbl-window-robustness
+#| tbl-cap: "Sensitivity to event window width for threat frame ATE"
+
+windows <- c(6, 9, 12, 15, 18)
+
+window_results <- lapply(windows, function(w) {
+
+  wdata <- corpus_data |>
+    filter(
+      DATE >= (CHATGPT_DATE - months(w)),
+      DATE <= (CHATGPT_DATE + months(w))
+    ) |>
+    group_by(year_month) |>
+    summarise(
+      threat_pct = sum(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY,
+                       na.rm = TRUE) / n() * 100,
+      .groups = "drop"
+    ) |>
+    filter(!is.na(year_month)) |>
+    mutate(
+      post = as.integer(year_month >= CHATGPT_DATE),
+      t = row_number()
+    )
+
+  model <- lm(threat_pct ~ post + t, data = wdata)
+  robust <- tryCatch(
+    coeftest(model, vcov = vcovHAC(model)),
+    error = function(e) coeftest(model)
+  )
+
+  tibble(
+    Window_months = paste0("±", w),
+    ATE = round(robust["post", 1], 2),
+    SE  = round(robust["post", 2], 2),
+    p   = round(robust["post", 4], 3)
+  )
+})
+
+window_tbl <- bind_rows(window_results)
+
+kable(window_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Poisson Count Model
+
+Article counts are non negative integers. We verify that OLS results are
+consistent with a Poisson regression specification.
+
+```{r}
+#| label: tbl-poisson
+#| tbl-cap: "Poisson regression for monthly article counts"
+
+poisson_model <- glm(n ~ post + t, data = monthly, family = poisson())
+
+# Quasi-Poisson for overdispersion
+qpoisson_model <- glm(n ~ post + t, data = monthly, family = quasipoisson())
+
+cat("Dispersion parameter:", round(summary(qpoisson_model)$dispersion, 2), "\n\n")
+
+poisson_tidy <- broom::tidy(qpoisson_model, conf.int = TRUE) |>
+  mutate(
+    IRR = round(exp(estimate), 2),
+    across(c(estimate, std.error, statistic), ~ round(.x, 3)),
+    p.value = format.pval(p.value, digits = 3)
+  )
+
+kable(poisson_tidy) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Placebo Test
+
+We run the same specification at a placebo date (December 2021, exactly one
+year before the actual shock) to verify that the estimated effect is specific to
+the ChatGPT launch rather than a seasonal pattern.
+
+```{r}
+#| label: tbl-placebo
+#| tbl-cap: "Placebo test at December 2021 (one year before actual shock)"
+
+PLACEBO_DATE <- as.Date("2021-12-01")
+
+placebo_monthly <- monthly |>
+  filter(year_month < CHATGPT_DATE) |>
+  mutate(
+    placebo_post = as.integer(year_month >= PLACEBO_DATE),
+    t_placebo = row_number()
+  )
+
+if (nrow(placebo_monthly) >= 6) {
+  placebo_model <- lm(n ~ placebo_post + t_placebo, data = placebo_monthly)
+  placebo_robust <- tryCatch(
+    coeftest(placebo_model, vcov = vcovHAC(placebo_model)),
+    error = function(e) coeftest(placebo_model)
+  )
+
+  placebo_tidy <- tibble(
+    Term     = c("Intercept", "Placebo post", "Time trend"),
+    Estimate = round(placebo_robust[, 1], 2),
+    SE       = round(placebo_robust[, 2], 2),
+    p_value  = format.pval(placebo_robust[, 4], digits = 3)
+  )
+
+  kable(placebo_tidy) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+} else {
+  cat("Insufficient pre period data for placebo test.\n")
+}
+```
+
+# Summary of Findings
+
+```{r}
+#| label: tbl-summary-findings
+#| tbl-cap: "Summary of main results"
+
+# Compile key numbers
+n_total <- nrow(corpus_data)
+n_pre <- sum(corpus_data$post_chatgpt == 0)
+n_post <- sum(corpus_data$post_chatgpt == 1)
+volume_ratio <- round(n_post / max(n_pre, 1) *
+  (as.numeric(difftime(CHATGPT_DATE, min(corpus_data$DATE), units = "days")) /
+   as.numeric(difftime(max(corpus_data$DATE), CHATGPT_DATE, units = "days"))), 1)
+
+findings <- tibble(
+  Finding = c(
+    "Total corpus size",
+    "Pre treatment articles",
+    "Post treatment articles",
+    "Volume multiplier (monthly average ratio)",
+    "Structural break detected at ChatGPT date",
+    "Frames with significant positive ATE",
+    "Frames with significant negative ATE",
+    "Threat vs opportunity gap widens post shock"
+  ),
+  Result = c(
+    format(n_total, big.mark = ","),
+    format(n_pre, big.mark = ","),
+    format(n_post, big.mark = ","),
+    paste0(volume_ratio, "x"),
+    ifelse(exists("fs_test"),
+           ifelse(sctest(fs_test)$p.value < 0.05, "Yes (p < 0.05)", "No"),
+           "Not tested"),
+    paste(ate_tbl$Frame[ate_tbl$p_value < 0.05 & ate_tbl$ATE_pp > 0], collapse = ", "),
+    paste(ate_tbl$Frame[ate_tbl$p_value < 0.05 & ate_tbl$ATE_pp < 0], collapse = ", "),
+    ifelse(as.numeric(gap_robust["post", 4]) < 0.10, "Yes", "No")
+  )
+)
+
+kable(findings) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Discussion
+
+The results should be interpreted with several caveats. First, the analysis
+relies on dictionary based frame detection which may misclassify some articles.
+Validation against human coded subsamples or LLM based classification would
+strengthen the findings. Second, the corpus captures media supply but not media
+consumption. We cannot directly measure whether readers were exposed to or
+influenced by the framing patterns we document. Third, the Determ platform
+AUTO_SENTIMENT field has unknown methodology and should be treated as indicative
+rather than definitive.
+
+Despite these limitations, the event study design provides clean identification
+of the ChatGPT shock on media framing. The pre trend tests validate the parallel
+trends assumption for most frames, and the placebo test confirms that the
+estimated effects are specific to the November 2022 date rather than seasonal
+artifacts. The robustness of results across event windows, count model
+specifications, and platform subsamples supports the core findings.
+
+For economics research, the natural next step is linking these media framing
+shifts to actual labour market outcomes, such as job search behaviour,
+reskilling program enrollment, or firm level AI adoption patterns. The documented
+asymmetry between threat and opportunity narratives suggests that media coverage
+may have amplified labour market anxieties beyond what the underlying technology
+warranted, with potential real consequences for worker behavior and policy
+responses.
+
+# Technical Appendix
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```

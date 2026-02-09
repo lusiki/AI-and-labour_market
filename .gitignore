@@ -1,0 +1,66 @@
+# ============================================================
+# Data files (too large for git, stored separately)
+# ============================================================
+data/raw/*.rds
+data/raw/*.csv
+data/raw/*.parquet
+data/raw/*.duckdb
+data/processed/*.rds
+data/processed/*.csv
+data/processed/*.parquet
+*.rds
+*.duckdb
+
+# ============================================================
+# R artifacts
+# ============================================================
+.Rproj.user/
+.Rhistory
+.Rdata
+.httr-oauth
+.DS_Store
+*.Rproj
+.Renviron
+
+# ============================================================
+# renv
+# ============================================================
+renv/library/
+renv/staging/
+renv/python/
+renv/sandbox/
+
+# ============================================================
+# Output artifacts (reproducible from code)
+# ============================================================
+output/reports/*.html
+output/reports/*.pdf
+output/figures/*.png
+output/figures/*.pdf
+output/tables/*.csv
+output/tables/*.tex
+
+# ============================================================
+# Quarto artifacts
+# ============================================================
+*_files/
+*_cache/
+.quarto/
+
+# ============================================================
+# OS and editor
+# ============================================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# ============================================================
+# Secrets / credentials
+# ============================================================
+.env
+config_local.yml
+credentials/

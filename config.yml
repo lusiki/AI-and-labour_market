@@ -1,0 +1,338 @@
+# ==============================================================================
+# PROJECT CONFIGURATION
+# ==============================================================================
+# Centralized configuration for the AI & Labour Market media analysis project.
+# All R scripts source this file so paths and parameters are defined once.
+# ==============================================================================
+
+# --- Paths -------------------------------------------------------------------
+paths:
+  # Source database (not included in repo — see README for access instructions)
+  database: "C:/Users/lsikic/Luka C/DetermDB/determDB.duckdb"
+  db_table: "media_data"
+
+  # Data directories (relative to project root)
+  raw_corpus: "data/raw/ai_labour_corpus.rds"
+  diagnostic_corpus: "data/processed/ai_labour_corpus_diagnostic.rds"
+  analysed_corpus: "data/processed/ai_labour_corpus_analysed.rds"
+
+  # Output directories
+  figures: "output/figures"
+  tables: "output/tables"
+  reports: "output/reports"
+
+# --- Corpus extraction -------------------------------------------------------
+extraction:
+  # SQL LIKE patterns for initial fast filter (Group A: AI/Technology)
+  ai_sql_terms:
+    - "umjetn%inteligencij%"
+    - "strojn%učenj%"
+    - "chatgpt"
+    - "chat gpt"
+    - "gpt-4"
+    - "gpt-3"
+    - "gpt 4"
+    - "openai"
+    - "open ai"
+    - "generativn%ai%"
+    - "automatizacij%"
+    - "robotizacij%"
+    - "algoritam"
+    - "algoritm%"
+    - "neuronsk%"
+    - "neuralna mreža"
+    - "chatbot%"
+    - "gemini"
+    - "copilot"
+    - "midjourney"
+    - "llm"
+
+  # SQL LIKE patterns for initial fast filter (Group B: Labour Market)
+  labour_sql_terms:
+    - "posao"
+    - "poslovi"
+    - "poslova"
+    - "poslove"
+    - "zaposlen%"
+    - "zapošljav%"
+    - "nezaposlen%"
+    - "radn%mjest%"
+    - "tržišt%rada"
+    - "vještin%"
+    - "kompetencij%"
+    - "karijer%"
+    - "produktivnost"
+    - "otpuštan%"
+    - "prekvalifikacij%"
+
+# --- Regex patterns (precise, applied in R after SQL pre-filter) -------------
+regex:
+  ai_patterns:
+    "umjetna inteligencija": "umjetn.*inteligencij"
+    "strojno učenje": "strojn.*učenj"
+    "ChatGPT": "chat.?gpt"
+    "GPT-4/GPT-3": "gpt.?[34]"
+    "OpenAI": "openai|open ai"
+    "generativni AI": "generativn.*(ai|umjetn)"
+    "automatizacija": "automatizacij"
+    "robotizacija": "robotizacij"
+    "algoritam": "algoritm"
+    "neuronska mreža": "neuronsk|neuralna"
+    "chatbot": "chatbot"
+    "LLM": "\\bllm\\b"
+    "Gemini": "\\bgemini\\b"
+    "Copilot": "copilot"
+    "duboko učenje": "duboko.*učenj"
+
+  labour_patterns:
+    "posao/poslovi": "\\bposao|\\bposlovi|\\bposlove|\\bposlova"
+    "zaposleni/zapošljavanje": "zaposlen|zapošljav"
+    "nezaposlenost": "nezaposlen"
+    "radno mjesto": "radn.*mjest"
+    "tržište rada": "tržišt.*rada"
+    "vještine": "vještin"
+    "kompetencije": "kompetencij"
+    "karijera": "karijer"
+    "produktivnost": "produktivnost"
+    "otpuštanje": "otpuštan"
+    "prekvalifikacija": "prekvalifikacij|dokvalifikacij"
+    "plaća": "\\bplaća|\\bplaće|\\bplaću"
+    "poslodavac": "poslodav"
+    "radna snaga": "radn.*snag"
+    "zanimanje": "zaniman"
+
+# --- Frame dictionaries ------------------------------------------------------
+frames:
+  JOB_LOSS:
+    description: "AI eliminates jobs"
+    keywords:
+      - "gubitak posla"
+      - "gubitak poslova"
+      - "gubitak radnih mjesta"
+      - "ukidanje radnih mjesta"
+      - "ukidanje poslova"
+      - "zamjena radnika"
+      - "zamijeniti radnike"
+      - "zamjenjuje radnike"
+      - "istisnuti radnike"
+      - "istiskivanje"
+      - "otpuštanje"
+      - "otpuštanja"
+      - "nestanak poslova"
+      - "nestanak zanimanja"
+      - "suvišan"
+      - "suvišni radnici"
+      - "tehnološka nezaposlenost"
+      - "krade poslove"
+      - "krade posao"
+      - "oduzima posao"
+      - "prijeti radnim mjestima"
+      - "ugrožava radna mjesta"
+  JOB_CREATION:
+    description: "AI creates new opportunities"
+    keywords:
+      - "nova radna mjesta"
+      - "novi poslovi"
+      - "novo zapošljavanje"
+      - "nove prilike"
+      - "nove mogućnosti"
+      - "stvaranje poslova"
+      - "rast zapošljavanja"
+      - "povećanje zapošljavanja"
+      - "nova zanimanja"
+      - "nova karijera"
+      - "potražnja za stručnjacima"
+      - "nedostatak radnika"
+      - "deficitarna zanimanja"
+  TRANSFORMATION:
+    description: "AI transforms rather than destroys work"
+    keywords:
+      - "transformacija rada"
+      - "transformacija poslova"
+      - "promjena načina rada"
+      - "mijenja način rada"
+      - "prilagodba"
+      - "prilagoditi se"
+      - "prilagođavanje"
+      - "nadopunjuje"
+      - "komplementar"
+      - "suradnja čovjeka i"
+      - "čovjek i stroj"
+      - "evolucija poslova"
+      - "evolucija rada"
+      - "nove uloge"
+      - "promijenjena uloga"
+      - "ne zamjenjuje nego"
+  SKILLS:
+    description: "Focus on reskilling and education"
+    keywords:
+      - "prekvalifikacija"
+      - "dokvalifikacija"
+      - "cjeloživotno učenje"
+      - "digitalna pismenost"
+      - "digitalne vještine"
+      - "nova znanja"
+      - "nove vještine"
+      - "jaz u vještinama"
+      - "nedostatak vještina"
+      - "reskilling"
+      - "upskilling"
+      - "obrazovanje za budućnost"
+      - "stem vještine"
+      - "programiranje"
+  REGULATION:
+    description: "Policy, governance, and worker protection"
+    keywords:
+      - "regulacija ai"
+      - "regulativa"
+      - "zakon o ai"
+      - "zakonski okvir"
+      - "eu regulativa"
+      - "ai act"
+      - "etička pitanja"
+      - "etika ai"
+      - "sindikat"
+      - "sindikalni"
+      - "zaštita radnika"
+      - "prava radnika"
+      - "socijalna zaštita"
+  PRODUCTIVITY:
+    description: "Economic benefits and efficiency"
+    keywords:
+      - "produktivnost"
+      - "povećanje produktivnosti"
+      - "učinkovitost"
+      - "efikasnost"
+      - "ušteda"
+      - "smanjenje troškova"
+      - "konkurentnost"
+      - "konkurentna prednost"
+      - "gospodarski rast"
+      - "ekonomski rast"
+      - "optimizacija"
+  INEQUALITY:
+    description: "Distributional concerns and digital divide"
+    keywords:
+      - "nejednakost"
+      - "rastuća nejednakost"
+      - "digitalni jaz"
+      - "tehnološki jaz"
+      - "socijalna nejednakost"
+      - "polarizacija"
+      - "jaz u plaćama"
+      - "ranjive skupine"
+      - "marginalizirani"
+      - "srednja klasa"
+      - "nestanak srednje klase"
+  FEAR_RESISTANCE:
+    description: "Anxiety, fear, and opposition to AI"
+    keywords:
+      - "strah od ai"
+      - "strah od gubitka"
+      - "strah od tehnologij"
+      - "prijetnja"
+      - "opasnost"
+      - "apokalipsa"
+      - "distopija"
+      - "katastrofa"
+      - "upozorenje"
+      - "alarm"
+      - "otpor prema"
+      - "protivljenje"
+      - "neizvjesnost"
+      - "nesigurnost"
+      - "panika"
+      - "zabrinutost"
+
+# --- Actor dictionaries ------------------------------------------------------
+actors:
+  WORKERS:
+    - "radnik"
+    - "radnici"
+    - "radnica"
+    - "zaposlenik"
+    - "zaposlenici"
+    - "djelatnik"
+    - "djelatnici"
+  EMPLOYERS:
+    - "poslodavac"
+    - "poslodavci"
+    - "tvrtka"
+    - "tvrtke"
+    - "poduzeće"
+    - "kompanija"
+    - "korporacija"
+  TECH_COMPANIES:
+    - "openai"
+    - "google"
+    - "microsoft"
+    - "meta"
+    - "amazon"
+    - "nvidia"
+    - "chatgpt"
+    - "deepmind"
+  POLICY_MAKERS:
+    - "vlada"
+    - "ministar"
+    - "ministarstvo"
+    - "sabor"
+    - "eu komisija"
+    - "europska komisija"
+  EXPERTS:
+    - "stručnjak"
+    - "ekspert"
+    - "znanstvenik"
+    - "istraživač"
+    - "analitičar"
+    - "profesor"
+  UNIONS:
+    - "sindikat"
+    - "sindikalni"
+
+# --- Media outlet classification ---------------------------------------------
+outlet_types:
+  Tabloid:
+    - "24sata"
+    - "index"
+    - "net\\.hr"
+  Quality:
+    - "jutarnji"
+    - "vecernji"
+    - "dnevnik"
+    - "n1"
+    - "tportal"
+    - "telegram"
+  Regional:
+    - "slobodna.*dalmacija"
+    - "novi.*list"
+  Public:
+    - "hrt"
+  Tech:
+    - "bug"
+    - "netokracija"
+  Business:
+    - "poslovni"
+    - "lider"
+    - "forbes.*hr"
+
+# --- Key events timeline -----------------------------------------------------
+events:
+  - date: "2022-11-30"
+    label: "ChatGPT launch"
+    description: "OpenAI releases ChatGPT, triggering global media coverage"
+  - date: "2023-03-14"
+    label: "GPT-4 release"
+    description: "OpenAI releases GPT-4, demonstrating advanced capabilities"
+  - date: "2023-07-01"
+    label: "EU AI Act draft"
+    description: "European Parliament approves AI Act negotiating position"
+  - date: "2024-03-13"
+    label: "EU AI Act adopted"
+    description: "European Parliament formally adopts the EU AI Act"
+
+# --- Analysis parameters -----------------------------------------------------
+analysis:
+  min_articles_per_outlet: 50   # minimum articles for outlet-level analysis
+  context_chars: 80             # characters of context around keyword matches
+  seed: 42                      # random seed for reproducibility
+  loess_span: 0.75              # smoothing parameter for trend lines

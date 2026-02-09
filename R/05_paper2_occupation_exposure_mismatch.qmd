@@ -1,0 +1,1240 @@
+---
+title: "AI Exposure and Media Salience Mismatch"
+subtitle: "Which Occupations Get the Narrative? Evidence from Croatian Digital Media"
+author: "Media Analysis Research"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    df-print: paged
+    fig-width: 10
+    fig-height: 6
+    fig-dpi: 300
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# ==========================================================================
+# PACKAGES
+# ==========================================================================
+
+required_packages <- c(
+  "dplyr", "tidyr", "stringr", "stringi", "lubridate", "forcats", "tibble",
+  "ggplot2", "scales", "patchwork", "ggrepel",
+  "knitr", "kableExtra",
+  "fixest",
+  "sandwich", "lmtest",
+  "broom",
+  "zoo",
+  "corrplot"
+)
+
+for (pkg in required_packages) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    install.packages(pkg, quiet = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+options(dplyr.summarise.inform = FALSE, scipen = 999)
+
+# --------------------------------------------------------------------------
+# THEME
+# --------------------------------------------------------------------------
+
+theme_econ <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", size = 11),
+    plot.caption = element_text(color = "gray50", size = 9, hjust = 0),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(size = 11)
+  )
+theme_set(theme_econ)
+
+# Palettes
+exposure_colors <- c(
+  "High"   = "#e41a1c",
+  "Medium" = "#ff7f00",
+  "Low"    = "#4daf4a"
+)
+
+task_colors <- c(
+  "Routine Cognitive"     = "#e41a1c",
+  "Non-routine Cognitive" = "#377eb8",
+  "Routine Manual"        = "#ff7f00",
+  "Non-routine Manual"    = "#4daf4a",
+  "Creative/Analytical"   = "#984ea3"
+)
+
+frame_colors <- c(
+  "JOB_LOSS"        = "#e41a1c",
+  "JOB_CREATION"    = "#4daf4a",
+  "TRANSFORMATION"  = "#ff7f00",
+  "SKILLS"          = "#377eb8",
+  "REGULATION"      = "#984ea3",
+  "PRODUCTIVITY"    = "#f781bf",
+  "INEQUALITY"      = "#a65628",
+  "FEAR_RESISTANCE" = "#999999"
+)
+```
+
+# Introduction
+
+A growing body of economics research measures which occupations are most exposed
+to AI driven automation. The seminal contributions include the task based
+framework of Acemoglu and Restrepo (2019, 2022), the AI Occupational Exposure
+Index of Felten, Raj, and Seamans (2021), and the GPT exposure scores of
+Eloundou, Manning, Mishkin, and Rock (2023). These studies converge on a
+finding that upends earlier automation narratives. Unlike previous waves of
+technology that displaced routine manual and routine cognitive tasks, generative
+AI disproportionately affects non routine cognitive work including translation,
+coding, data analysis, legal research, and content creation.
+
+A separate question, and the one this paper addresses, is whether public media
+narratives track this actual exposure distribution or systematically
+misrepresent it. If media disproportionately cover certain occupation categories
+while ignoring others that face equal or greater exposure, the resulting
+information environment could distort worker retraining decisions, firm
+investment strategies, and policy responses.
+
+We construct an occupation mention corpus from Croatian digital media articles
+about AI and labour markets (2021 to 2024), classify mentioned occupations into
+task based categories with theoretically derived AI exposure tiers, and test
+for systematic mismatch between media salience and predicted exposure. The
+analysis proceeds entirely within the existing corpus, using occupation keyword
+dictionaries mapped to established taxonomies.
+
+The contribution is twofold. First, we document which occupations dominate the
+Croatian AI labour narrative, revealing a media landscape heavily skewed toward
+a small set of stereotypical automation targets. Second, we show that the
+correlation between media salience and theoretical AI exposure is weak or even
+inverted for certain occupation groups, suggesting that public narratives about
+AI and work are substantively disconnected from the technical reality of
+exposure.
+
+# Data
+
+## Corpus Loading
+
+```{r}
+#| label: load-corpus
+
+CORPUS_PATH <- "C:/Users/lsikic/Desktop/AI_labour/data/raw/ai_labour_corpus.rds"
+
+if (!file.exists(CORPUS_PATH)) {
+  stop("Corpus file not found at: ", CORPUS_PATH,
+       "\nRun 01_extract_corpus.R first.")
+}
+
+corpus_raw <- readRDS(CORPUS_PATH)
+
+corpus_data <- corpus_raw |>
+  mutate(
+    DATE = as.Date(DATE),
+    .text_lower = stri_trans_tolower(
+      paste(coalesce(TITLE, ""), coalesce(FULL_TEXT, ""), sep = " ")
+    ),
+    year       = year(DATE),
+    month      = month(DATE),
+    year_month = floor_date(DATE, "month"),
+    quarter    = quarter(DATE),
+    word_count = stri_count_regex(FULL_TEXT, "\\S+")
+  ) |>
+  filter(!is.na(DATE), DATE < as.Date("2024-01-01")) |>
+  distinct(TITLE, DATE, FROM, .keep_all = TRUE) |>
+  arrange(DATE)
+
+# Treatment indicator
+CHATGPT_DATE <- as.Date("2022-12-01")
+corpus_data$post_chatgpt <- as.integer(corpus_data$DATE >= CHATGPT_DATE)
+
+cat("Corpus loaded:", format(nrow(corpus_data), big.mark = ","), "articles\n")
+cat("Date range:", as.character(min(corpus_data$DATE)), "to",
+    as.character(max(corpus_data$DATE)), "\n")
+```
+
+## Occupation Dictionary Construction
+
+We build occupation keyword dictionaries covering 30 occupations, mapped to
+five task based categories following the Autor, Levy, and Murnane (2003)
+taxonomy and updated for generative AI exposure following Eloundou et al.
+(2023). Each occupation receives a theoretical AI exposure rating (High,
+Medium, Low) based on the share of tasks that current generative AI systems
+can perform.
+
+Croatian morphological variation is handled through stem based regex patterns
+that capture all major declension forms.
+
+```{r}
+#| label: occupation-dictionaries
+
+# --------------------------------------------------------------------------
+# OCCUPATION DICTIONARY
+# Each entry: label, regex pattern, task category, AI exposure tier
+# --------------------------------------------------------------------------
+
+occupation_dict <- tribble(
+  ~occupation,          ~pattern,                              ~task_category,            ~ai_exposure,
+  # --- ROUTINE COGNITIVE (historically automated, now AI amplified) ---
+  "Accountant",         "računovođ|knjigovođ|računovodstv",    "Routine Cognitive",       "High",
+  "Bank clerk",         "bankarski služben|bankarski radn",    "Routine Cognitive",       "High",
+  "Admin assistant",    "administrativn|tajnic|tajništv",      "Routine Cognitive",       "High",
+  "Data entry",         "unos podatak|obrada podatak",         "Routine Cognitive",       "High",
+  "Insurance agent",    "osiguravajuć|agent osiguran",         "Routine Cognitive",       "Medium",
+
+  # --- NON-ROUTINE COGNITIVE (the new AI frontier) ---
+  "Programmer",         "programer|softver.*inženjer|developer|programiran",  "Non-routine Cognitive",  "High",
+  "Translator",         "prevoditelj|prevođenj|prevodioc",     "Non-routine Cognitive",   "High",
+  "Journalist",         "novinar|uredni.*redakcij|reporter",   "Non-routine Cognitive",   "High",
+  "Lawyer",             "odvjetni|pravni|odvjetništv|pravnic",  "Non-routine Cognitive",  "High",
+  "Analyst",            "analitiča|analyst",                   "Non-routine Cognitive",   "High",
+  "Designer",           "dizajner|grafičk.*dizajn|ux dizajn",  "Non-routine Cognitive",  "High",
+  "Marketing",          "marketinšk|marketing.*stručnjak",     "Non-routine Cognitive",   "High",
+  "Copywriter",         "copywriter|tekstopisac|content.*writer", "Non-routine Cognitive", "High",
+  "Teacher",            "učitelj|nastavni|profesor.*škol|pedagog", "Non-routine Cognitive", "Medium",
+  "Doctor",             "liječni|doktor.*medicin|medicinsk.*stručnjak", "Non-routine Cognitive", "Medium",
+  "Researcher",         "istraživač|znanstveni",               "Non-routine Cognitive",   "Medium",
+
+  # --- CREATIVE / ANALYTICAL (mixed exposure) ---
+  "Artist",             "umjetni.*stvarala|kreativc|likovn.*umjetn", "Creative/Analytical", "Medium",
+  "Musician",           "glazbeni|muzičar|kompozitor",         "Creative/Analytical",     "Medium",
+  "Architect",          "arhitekt",                            "Creative/Analytical",     "Medium",
+  "Manager",            "menedžer|upravljač|voditelj.*tima|direktor", "Creative/Analytical", "Low",
+
+  # --- ROUTINE MANUAL (traditional automation, lower AI exposure) ---
+  "Factory worker",     "tvornički radn|proizvodni radn|radnik.*u tvorn", "Routine Manual", "Medium",
+  "Warehouse",          "skladištar|logistič.*radn",           "Routine Manual",          "Medium",
+  "Cashier",            "blagajni|blagajn",                    "Routine Manual",          "Medium",
+  "Driver",             "vozač|kamiondžij|dostavljač",         "Routine Manual",          "Low",
+
+  # --- NON-ROUTINE MANUAL (lowest AI exposure) ---
+  "Construction",       "građevinski radn|građevinsk|zidar",   "Non-routine Manual",     "Low",
+  "Electrician",        "električar|elektroinstala",           "Non-routine Manual",      "Low",
+  "Plumber",            "vodoinstalater|instalater",           "Non-routine Manual",      "Low",
+  "Chef/Cook",          "kuhar|kuharic|chef",                  "Non-routine Manual",      "Low",
+  "Healthcare aide",    "medicinska sestra|njegovatelj|bolničar", "Non-routine Manual",   "Low",
+  "Hairdresser",        "frizer|frizerk",                      "Non-routine Manual",      "Low"
+)
+
+cat("Occupation dictionary:", nrow(occupation_dict), "occupations\n")
+cat("Task categories:", paste(unique(occupation_dict$task_category), collapse = ", "), "\n")
+cat("Exposure tiers:", paste(unique(occupation_dict$ai_exposure), collapse = ", "), "\n")
+```
+
+```{r}
+#| label: tbl-occupation-dict
+#| tbl-cap: "Occupation dictionary with task classification and theoretical AI exposure"
+
+occupation_display <- occupation_dict |>
+  select(occupation, task_category, ai_exposure) |>
+  arrange(task_category, desc(ai_exposure))
+
+kable(occupation_display,
+      col.names = c("Occupation", "Task Category", "AI Exposure")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  pack_rows(index = table(occupation_display$task_category)[
+    unique(occupation_display$task_category)
+  ])
+```
+
+## Occupation Detection
+
+```{r}
+#| label: detect-occupations
+
+# Detect each occupation in corpus
+for (i in seq_len(nrow(occupation_dict))) {
+  col_name <- paste0("occ_", gsub("[^a-zA-Z]", "_", occupation_dict$occupation[i]))
+  corpus_data[[col_name]] <- stri_detect_regex(
+    corpus_data$.text_lower,
+    occupation_dict$pattern[i],
+    case_insensitive = TRUE
+  )
+}
+
+occ_cols <- paste0("occ_", gsub("[^a-zA-Z]", "_", occupation_dict$occupation))
+
+# Count mentions
+occ_counts <- corpus_data |>
+  summarise(across(all_of(occ_cols), ~ sum(.x, na.rm = TRUE))) |>
+  pivot_longer(everything(), names_to = "col", values_to = "mentions") |>
+  mutate(
+    occupation = occupation_dict$occupation[match(col, occ_cols)],
+    task_category = occupation_dict$task_category[match(col, occ_cols)],
+    ai_exposure = occupation_dict$ai_exposure[match(col, occ_cols)],
+    pct = round(mentions / nrow(corpus_data) * 100, 2),
+    salience_rank = rank(-mentions, ties.method = "min")
+  ) |>
+  arrange(desc(mentions))
+
+cat("Articles mentioning at least one occupation:",
+    sum(rowSums(corpus_data[, occ_cols], na.rm = TRUE) > 0), "\n")
+cat("Share of corpus:",
+    round(sum(rowSums(corpus_data[, occ_cols], na.rm = TRUE) > 0) / nrow(corpus_data) * 100, 1),
+    "%\n")
+```
+
+# Media Salience of Occupations
+
+## Overall Occupation Mentions
+
+```{r}
+#| label: fig-occupation-salience
+#| fig-cap: "Occupation mentions in AI labour corpus, colored by theoretical AI exposure"
+#| fig-height: 8
+
+occ_plot <- occ_counts |>
+  filter(mentions > 0) |>
+  mutate(
+    ai_exposure = factor(ai_exposure, levels = c("High", "Medium", "Low"))
+  )
+
+ggplot(occ_plot, aes(x = reorder(occupation, mentions), y = mentions, fill = ai_exposure)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = paste0(pct, "%")), hjust = -0.1, size = 3) +
+  coord_flip() +
+  scale_fill_manual(values = exposure_colors) +
+  labs(
+    title = "Which Occupations Dominate the AI Labour Narrative?",
+    subtitle = "Article count in corpus, colored by theoretical AI exposure tier",
+    x = NULL, y = "Number of articles mentioning occupation",
+    fill = "AI Exposure",
+    caption = "Exposure classification based on Eloundou et al. (2023) task framework."
+  ) +
+  expand_limits(y = max(occ_plot$mentions) * 1.15)
+```
+
+## Salience by Task Category
+
+```{r}
+#| label: fig-task-category-salience
+#| fig-cap: "Media salience by task category"
+#| fig-height: 5
+
+task_salience <- occ_counts |>
+  group_by(task_category) |>
+  summarise(
+    n_occupations = n(),
+    total_mentions = sum(mentions),
+    avg_mentions = round(mean(mentions), 1),
+    pct_corpus = round(total_mentions / nrow(corpus_data) * 100, 1),
+    .groups = "drop"
+  ) |>
+  arrange(desc(total_mentions))
+
+ggplot(task_salience, aes(x = reorder(task_category, total_mentions),
+                          y = total_mentions, fill = task_category)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = paste0(pct_corpus, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_manual(values = task_colors, guide = "none") +
+  labs(
+    title = "Media Attention by Task Category",
+    subtitle = "Total article mentions across all occupations in category",
+    x = NULL, y = "Total mentions"
+  ) +
+  expand_limits(y = max(task_salience$total_mentions) * 1.15)
+```
+
+```{r}
+#| label: tbl-task-salience
+#| tbl-cap: "Media salience by task category"
+
+kable(task_salience,
+      col.names = c("Task Category", "N Occupations", "Total Mentions",
+                     "Avg per Occupation", "% of Corpus")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Salience by Exposure Tier
+
+```{r}
+#| label: fig-exposure-salience
+#| fig-cap: "Media salience by AI exposure tier"
+#| fig-height: 4
+
+exposure_salience <- occ_counts |>
+  mutate(ai_exposure = factor(ai_exposure, levels = c("High", "Medium", "Low"))) |>
+  group_by(ai_exposure) |>
+  summarise(
+    n_occupations = n(),
+    total_mentions = sum(mentions),
+    avg_mentions = round(mean(mentions), 1),
+    median_mentions = median(mentions),
+    .groups = "drop"
+  )
+
+ggplot(exposure_salience, aes(x = ai_exposure, y = avg_mentions, fill = ai_exposure)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = round(avg_mentions, 0)), vjust = -0.5, size = 4) +
+  scale_fill_manual(values = exposure_colors, guide = "none") +
+  labs(
+    title = "Average Media Mentions per Occupation by AI Exposure Tier",
+    subtitle = "Do high exposure occupations receive proportionally more attention?",
+    x = "Theoretical AI Exposure", y = "Average articles per occupation"
+  ) +
+  expand_limits(y = max(exposure_salience$avg_mentions) * 1.15)
+```
+
+# The Salience Mismatch
+
+## Constructing the Mismatch Measure
+
+We define the salience mismatch as the divergence between an occupations
+media prominence ranking and its theoretical AI exposure ranking. A positive
+mismatch means the occupation receives more media attention than its exposure
+level would predict. A negative mismatch means the occupation is
+underrepresented relative to its actual risk.
+
+```{r}
+#| label: mismatch-construction
+
+# Assign numeric exposure scores
+exposure_scores <- c("High" = 3, "Medium" = 2, "Low" = 1)
+
+mismatch_data <- occ_counts |>
+  mutate(
+    exposure_score = exposure_scores[ai_exposure],
+    exposure_rank = rank(-exposure_score, ties.method = "average"),
+    salience_rank = rank(-mentions, ties.method = "average"),
+    # Normalize both to 0-1 scale for comparison
+    salience_norm = (mentions - min(mentions)) / max(max(mentions) - min(mentions), 1),
+    exposure_norm = (exposure_score - 1) / 2,
+    # Mismatch: positive = oversalience, negative = undersalience
+    mismatch = salience_norm - exposure_norm,
+    mismatch_direction = case_when(
+      mismatch > 0.1  ~ "Over-represented",
+      mismatch < -0.1 ~ "Under-represented",
+      TRUE            ~ "Roughly aligned"
+    )
+  )
+```
+
+```{r}
+#| label: fig-mismatch-scatter
+#| fig-cap: "Media salience vs theoretical AI exposure by occupation"
+#| fig-height: 7
+
+ggplot(mismatch_data, aes(x = exposure_norm, y = salience_norm)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(aes(color = task_category, size = mentions), alpha = 0.7) +
+  geom_text_repel(aes(label = occupation), size = 2.8, max.overlaps = 20) +
+  scale_color_manual(values = task_colors) +
+  scale_size_continuous(range = c(2, 10), guide = "none") +
+  annotate("text", x = 0.8, y = 0.2, label = "Under-represented\n(high exposure, low salience)",
+           color = "gray40", size = 3, fontface = "italic") +
+  annotate("text", x = 0.2, y = 0.8, label = "Over-represented\n(low exposure, high salience)",
+           color = "gray40", size = 3, fontface = "italic") +
+  labs(
+    title = "The Salience Mismatch",
+    subtitle = "Points above the 45 degree line receive more attention than exposure predicts",
+    x = "Theoretical AI Exposure (normalized)",
+    y = "Media Salience (normalized)",
+    color = "Task Category",
+    caption = "Dashed line represents perfect alignment between exposure and salience."
+  )
+```
+
+```{r}
+#| label: fig-mismatch-bar
+#| fig-cap: "Salience mismatch by occupation (positive = over-represented in media)"
+#| fig-height: 8
+
+mismatch_plot <- mismatch_data |>
+  filter(mentions > 0) |>
+  mutate(
+    mismatch_direction = factor(mismatch_direction,
+      levels = c("Over-represented", "Roughly aligned", "Under-represented"))
+  )
+
+ggplot(mismatch_plot, aes(x = reorder(occupation, mismatch), y = mismatch,
+                          fill = mismatch_direction)) +
+  geom_col(alpha = 0.85) +
+  geom_hline(yintercept = 0, color = "gray30") +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "Over-represented" = "#e41a1c",
+    "Roughly aligned" = "gray60",
+    "Under-represented" = "#377eb8"
+  )) +
+  labs(
+    title = "Salience Mismatch by Occupation",
+    subtitle = "Difference between normalized media salience and theoretical AI exposure",
+    x = NULL, y = "Mismatch (salience - exposure)", fill = NULL,
+    caption = "Positive values indicate occupation receives more media attention than its AI exposure level warrants."
+  )
+```
+
+## Correlation Between Salience and Exposure
+
+```{r}
+#| label: tbl-correlation
+#| tbl-cap: "Rank correlation between media salience and AI exposure"
+
+# Spearman rank correlation
+spearman_test <- cor.test(
+  mismatch_data$salience_rank,
+  mismatch_data$exposure_rank,
+  method = "spearman"
+)
+
+# Kendall tau
+kendall_test <- cor.test(
+  mismatch_data$mentions,
+  mismatch_data$exposure_score,
+  method = "kendall"
+)
+
+# Pearson on normalized scores
+pearson_test <- cor.test(
+  mismatch_data$salience_norm,
+  mismatch_data$exposure_norm,
+  method = "pearson"
+)
+
+cor_tbl <- tibble(
+  Method = c("Spearman rank", "Kendall tau", "Pearson (normalized)"),
+  Correlation = round(c(spearman_test$estimate, kendall_test$estimate,
+                        pearson_test$estimate), 3),
+  p_value = format.pval(c(spearman_test$p.value, kendall_test$p.value,
+                          pearson_test$p.value), digits = 3),
+  Interpretation = case_when(
+    abs(c(spearman_test$estimate, kendall_test$estimate, pearson_test$estimate)) < 0.2 ~
+      "Weak or no alignment",
+    abs(c(spearman_test$estimate, kendall_test$estimate, pearson_test$estimate)) < 0.5 ~
+      "Moderate alignment",
+    TRUE ~ "Strong alignment"
+  )
+)
+
+kable(cor_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Frame Association by Occupation Type
+
+Do different occupation categories trigger different media frames? We test
+whether high exposure occupations are more likely to be discussed in job loss
+framing while low exposure occupations appear more in productivity or
+transformation frames.
+
+## Frame Detection
+
+```{r}
+#| label: frame-detection
+
+frame_dictionaries <- list(
+  JOB_LOSS = c(
+    "gubitak posla", "gubitak poslova", "gubitak radnih mjesta",
+    "ukidanje radnih mjesta", "ukidanje poslova",
+    "zamjena radnika", "zamijeniti radnike", "zamjenjuje radnike",
+    "istisnuti radnike", "istiskivanje",
+    "otpuštanje", "otpuštanja",
+    "nestanak poslova", "nestanak zanimanja",
+    "suvišan", "suvišni radnici",
+    "tehnološka nezaposlenost",
+    "krade poslove", "krade posao", "oduzima posao",
+    "prijeti radnim mjestima", "ugrožava radna mjesta"
+  ),
+  JOB_CREATION = c(
+    "nova radna mjesta", "novi poslovi", "novo zapošljavanje",
+    "nove prilike", "nove mogućnosti",
+    "stvaranje poslova",
+    "rast zapošljavanja", "povećanje zapošljavanja",
+    "nova zanimanja", "nova karijera",
+    "potražnja za stručnjacima", "nedostatak radnika",
+    "deficitarna zanimanja"
+  ),
+  TRANSFORMATION = c(
+    "transformacija rada", "transformacija poslova",
+    "promjena načina rada", "mijenja način rada",
+    "prilagodba", "prilagoditi se", "prilagođavanje",
+    "nadopunjuje", "komplementar",
+    "suradnja čovjeka i", "čovjek i stroj",
+    "evolucija poslova", "evolucija rada",
+    "nove uloge", "promijenjena uloga",
+    "ne zamjenjuje nego"
+  ),
+  SKILLS = c(
+    "prekvalifikacija", "dokvalifikacija",
+    "cjeloživotno učenje",
+    "digitalna pismenost", "digitalne vještine",
+    "nova znanja", "nove vještine",
+    "jaz u vještinama", "nedostatak vještina",
+    "reskilling", "upskilling",
+    "obrazovanje za budućnost",
+    "stem vještine", "programiranje"
+  ),
+  REGULATION = c(
+    "regulacija ai", "regulativa",
+    "zakon o ai", "zakonski okvir",
+    "eu regulativa", "ai act",
+    "etička pitanja", "etika ai",
+    "sindikat", "sindikalni",
+    "zaštita radnika", "prava radnika",
+    "socijalna zaštita"
+  ),
+  PRODUCTIVITY = c(
+    "produktivnost", "povećanje produktivnosti",
+    "učinkovitost", "efikasnost",
+    "ušteda", "smanjenje troškova",
+    "konkurentnost", "konkurentna prednost",
+    "gospodarski rast", "ekonomski rast",
+    "optimizacija"
+  ),
+  INEQUALITY = c(
+    "nejednakost", "rastuća nejednakost",
+    "digitalni jaz", "tehnološki jaz",
+    "socijalna nejednakost",
+    "polarizacija",
+    "jaz u plaćama",
+    "ranjive skupine", "marginalizirani",
+    "srednja klasa", "nestanak srednje klase"
+  ),
+  FEAR_RESISTANCE = c(
+    "strah od ai", "strah od gubitka", "strah od tehnologij",
+    "prijetnja", "opasnost",
+    "apokalipsa", "distopija", "katastrofa",
+    "upozorenje", "alarm",
+    "otpor prema", "protivljenje",
+    "neizvjesnost", "nesigurnost",
+    "panika", "zabrinutost"
+  )
+)
+
+for (fname in names(frame_dictionaries)) {
+  pattern <- paste(frame_dictionaries[[fname]], collapse = "|")
+  corpus_data[[paste0("frame_", fname)]] <- stri_detect_regex(
+    corpus_data$.text_lower, pattern
+  )
+}
+
+frame_cols <- paste0("frame_", names(frame_dictionaries))
+```
+
+## Frame Profiles by Task Category
+
+```{r}
+#| label: fig-frame-by-task
+#| fig-cap: "Frame prevalence in articles mentioning occupations from each task category"
+#| fig-height: 7
+
+# For each task category, find articles mentioning any occupation in that category
+task_categories <- unique(occupation_dict$task_category)
+
+task_frame_profiles <- lapply(task_categories, function(tc) {
+
+  # Get occupation columns for this task category
+  tc_occupations <- occupation_dict |> filter(task_category == tc)
+  tc_occ_cols <- paste0("occ_", gsub("[^a-zA-Z]", "_", tc_occupations$occupation))
+  tc_occ_cols <- tc_occ_cols[tc_occ_cols %in% names(corpus_data)]
+
+  if (length(tc_occ_cols) == 0) return(NULL)
+
+  # Articles mentioning any occupation in this category
+  has_tc <- rowSums(corpus_data[, tc_occ_cols, drop = FALSE], na.rm = TRUE) > 0
+  tc_articles <- corpus_data[has_tc, ]
+
+  if (nrow(tc_articles) < 10) return(NULL)
+
+  # Frame prevalence
+  tibble(
+    task_category = tc,
+    n_articles = nrow(tc_articles),
+    frame = names(frame_dictionaries),
+    pct = sapply(frame_cols, function(fc) {
+      sum(tc_articles[[fc]], na.rm = TRUE) / nrow(tc_articles) * 100
+    })
+  )
+})
+
+task_frame_df <- bind_rows(task_frame_profiles) |>
+  mutate(frame = str_remove(frame, "frame_"))
+
+if (nrow(task_frame_df) > 0) {
+  ggplot(task_frame_df, aes(x = frame, y = pct, fill = task_category)) +
+    geom_col(position = "dodge", alpha = 0.85) +
+    scale_fill_manual(values = task_colors) +
+    labs(
+      title = "Frame Profiles by Task Category",
+      subtitle = "How different occupation types are framed in media",
+      x = NULL, y = "% of articles with this frame", fill = "Task Category"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+## Frame Profiles by Exposure Tier
+
+```{r}
+#| label: fig-frame-by-exposure
+#| fig-cap: "Frame prevalence by AI exposure tier"
+#| fig-height: 6
+
+exposure_tiers <- c("High", "Medium", "Low")
+
+exposure_frame_profiles <- lapply(exposure_tiers, function(tier) {
+
+  tier_occupations <- occupation_dict |> filter(ai_exposure == tier)
+  tier_occ_cols <- paste0("occ_", gsub("[^a-zA-Z]", "_", tier_occupations$occupation))
+  tier_occ_cols <- tier_occ_cols[tier_occ_cols %in% names(corpus_data)]
+
+  if (length(tier_occ_cols) == 0) return(NULL)
+
+  has_tier <- rowSums(corpus_data[, tier_occ_cols, drop = FALSE], na.rm = TRUE) > 0
+  tier_articles <- corpus_data[has_tier, ]
+
+  if (nrow(tier_articles) < 10) return(NULL)
+
+  tibble(
+    ai_exposure = tier,
+    n_articles = nrow(tier_articles),
+    frame = names(frame_dictionaries),
+    pct = sapply(frame_cols, function(fc) {
+      sum(tier_articles[[fc]], na.rm = TRUE) / nrow(tier_articles) * 100
+    })
+  )
+})
+
+exposure_frame_df <- bind_rows(exposure_frame_profiles) |>
+  mutate(
+    frame = str_remove(frame, "frame_"),
+    ai_exposure = factor(ai_exposure, levels = c("High", "Medium", "Low"))
+  )
+
+if (nrow(exposure_frame_df) > 0) {
+  ggplot(exposure_frame_df, aes(x = frame, y = pct, fill = ai_exposure)) +
+    geom_col(position = "dodge", alpha = 0.85) +
+    scale_fill_manual(values = exposure_colors) +
+    labs(
+      title = "Frame Prevalence by AI Exposure Tier",
+      subtitle = "Are high exposure occupations more likely to appear in threat frames?",
+      x = NULL, y = "% of articles", fill = "AI Exposure Tier"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+## Regression: Frame Determinants
+
+We estimate logistic regressions testing whether occupation AI exposure predicts
+frame assignment, controlling for article characteristics.
+
+```{r}
+#| label: tbl-frame-logit
+#| tbl-cap: "Logistic regression: Does occupation exposure tier predict job loss framing?"
+
+# Build article-level dataset with exposure tier of most exposed mentioned occupation
+get_max_exposure <- function(row_idx) {
+  exposures <- c()
+  for (i in seq_len(nrow(occupation_dict))) {
+    col_name <- paste0("occ_", gsub("[^a-zA-Z]", "_", occupation_dict$occupation[i]))
+    if (col_name %in% names(corpus_data) && corpus_data[[col_name]][row_idx]) {
+      exposures <- c(exposures, exposure_scores[occupation_dict$ai_exposure[i]])
+    }
+  }
+  if (length(exposures) == 0) return(NA_real_)
+  max(exposures)
+}
+
+# Only process articles with occupation mentions
+has_any_occ <- rowSums(corpus_data[, occ_cols[occ_cols %in% names(corpus_data)],
+                                    drop = FALSE], na.rm = TRUE) > 0
+
+occ_article_idx <- which(has_any_occ)
+
+if (length(occ_article_idx) > 0) {
+  corpus_data$max_exposure <- NA_real_
+  for (idx in occ_article_idx) {
+    corpus_data$max_exposure[idx] <- get_max_exposure(idx)
+  }
+
+  reg_data <- corpus_data |>
+    filter(!is.na(max_exposure)) |>
+    mutate(
+      high_exposure = as.integer(max_exposure == 3),
+      job_loss = as.integer(frame_JOB_LOSS),
+      job_creation = as.integer(frame_JOB_CREATION),
+      threat = as.integer(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY),
+      opportunity = as.integer(frame_JOB_CREATION | frame_PRODUCTIVITY | frame_TRANSFORMATION)
+    )
+
+  cat("Articles with occupation mentions for regression:", nrow(reg_data), "\n\n")
+
+  if (nrow(reg_data) >= 30) {
+
+    # Job loss frame
+    m_loss <- glm(job_loss ~ high_exposure + post_chatgpt + word_count,
+                  data = reg_data, family = binomial())
+
+    # Threat composite
+    m_threat <- glm(threat ~ high_exposure + post_chatgpt + word_count,
+                    data = reg_data, family = binomial())
+
+    # Opportunity composite
+    m_opp <- glm(opportunity ~ high_exposure + post_chatgpt + word_count,
+                 data = reg_data, family = binomial())
+
+    models_tidy <- bind_rows(
+      broom::tidy(m_loss, conf.int = TRUE) |> mutate(outcome = "Job Loss Frame"),
+      broom::tidy(m_threat, conf.int = TRUE) |> mutate(outcome = "Threat Composite"),
+      broom::tidy(m_opp, conf.int = TRUE) |> mutate(outcome = "Opportunity Composite")
+    ) |>
+      filter(term != "(Intercept)") |>
+      mutate(
+        OR = round(exp(estimate), 3),
+        across(c(estimate, std.error, statistic), ~ round(.x, 3)),
+        p.value = format.pval(p.value, digits = 3)
+      ) |>
+      select(outcome, term, OR, estimate, std.error, p.value)
+
+    kable(models_tidy,
+          col.names = c("Outcome", "Predictor", "Odds Ratio", "Log-odds",
+                        "SE", "p-value")) |>
+      kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+  }
+}
+```
+
+# Temporal Dynamics of Occupation Salience
+
+## Did ChatGPT Change Which Occupations Get Covered?
+
+```{r}
+#| label: fig-occupation-prepost
+#| fig-cap: "Occupation mention shares before and after ChatGPT, top 15 occupations"
+#| fig-height: 7
+
+occ_prepost <- lapply(seq_len(nrow(occupation_dict)), function(i) {
+  col_name <- paste0("occ_", gsub("[^a-zA-Z]", "_", occupation_dict$occupation[i]))
+  if (!col_name %in% names(corpus_data)) return(NULL)
+
+  pre_data  <- corpus_data |> filter(post_chatgpt == 0)
+  post_data <- corpus_data |> filter(post_chatgpt == 1)
+
+  tibble(
+    occupation = occupation_dict$occupation[i],
+    task_category = occupation_dict$task_category[i],
+    ai_exposure = occupation_dict$ai_exposure[i],
+    pre_pct  = sum(pre_data[[col_name]], na.rm = TRUE) / max(nrow(pre_data), 1) * 100,
+    post_pct = sum(post_data[[col_name]], na.rm = TRUE) / max(nrow(post_data), 1) * 100,
+    change_pp = NA_real_
+  ) |>
+    mutate(change_pp = post_pct - pre_pct)
+})
+
+occ_prepost_df <- bind_rows(occ_prepost) |>
+  arrange(desc(abs(change_pp)))
+
+# Top 15 by change magnitude
+occ_top_change <- occ_prepost_df |>
+  filter(pre_pct > 0 | post_pct > 0) |>
+  head(15) |>
+  pivot_longer(cols = c(pre_pct, post_pct), names_to = "period", values_to = "pct") |>
+  mutate(period = ifelse(period == "pre_pct", "Pre ChatGPT", "Post ChatGPT"))
+
+ggplot(occ_top_change, aes(x = reorder(occupation, pct), y = pct, fill = period)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  coord_flip() +
+  scale_fill_manual(values = c("Pre ChatGPT" = "gray60", "Post ChatGPT" = "#2c7bb6")) +
+  labs(
+    title = "Occupation Salience Shift After ChatGPT",
+    subtitle = "Top 15 occupations by magnitude of change",
+    x = NULL, y = "% of articles mentioning occupation", fill = NULL
+  )
+```
+
+```{r}
+#| label: tbl-biggest-shifts
+#| tbl-cap: "Largest occupation salience shifts after ChatGPT launch"
+
+shift_tbl <- occ_prepost_df |>
+  filter(pre_pct > 0 | post_pct > 0) |>
+  mutate(
+    across(c(pre_pct, post_pct, change_pp), ~ round(.x, 2)),
+    direction = ifelse(change_pp > 0, "Increased", "Decreased")
+  ) |>
+  head(15)
+
+kable(shift_tbl |> select(occupation, task_category, ai_exposure,
+                           pre_pct, post_pct, change_pp, direction),
+      col.names = c("Occupation", "Task Cat.", "AI Exposure",
+                     "Pre %", "Post %", "Change (pp)", "Direction")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Monthly Occupation Trends
+
+```{r}
+#| label: fig-occupation-timeseries
+#| fig-cap: "Monthly mention trends for selected occupations"
+#| fig-height: 8
+
+# Select occupations with enough mentions for meaningful trends
+top_occupations <- occ_counts |>
+  filter(mentions >= 20) |>
+  pull(occupation) |>
+  head(8)
+
+if (length(top_occupations) > 0) {
+
+  occ_monthly <- lapply(top_occupations, function(occ) {
+    col_name <- paste0("occ_", gsub("[^a-zA-Z]", "_", occ))
+    if (!col_name %in% names(corpus_data)) return(NULL)
+
+    corpus_data |>
+      group_by(year_month) |>
+      summarise(
+        pct = sum(.data[[col_name]], na.rm = TRUE) / n() * 100,
+        .groups = "drop"
+      ) |>
+      filter(!is.na(year_month)) |>
+      mutate(occupation = occ)
+  })
+
+  occ_monthly_df <- bind_rows(occ_monthly)
+
+  ggplot(occ_monthly_df, aes(x = year_month, y = pct)) +
+    geom_line(color = "steelblue", linewidth = 0.5, alpha = 0.5) +
+    geom_smooth(method = "loess", span = 0.4, se = TRUE,
+                color = "#d7191c", linewidth = 0.8) +
+    geom_vline(xintercept = CHATGPT_DATE, linetype = "dashed", color = "gray30") +
+    facet_wrap(~ occupation, ncol = 2, scales = "free_y") +
+    scale_x_date(date_breaks = "6 months", date_labels = "%b\n%Y") +
+    labs(
+      title = "Monthly Occupation Mention Trends",
+      subtitle = "Vertical line marks ChatGPT launch",
+      x = NULL, y = "% of articles"
+    ) +
+    theme(axis.text.x = element_text(size = 8))
+}
+```
+
+# Concentration Analysis
+
+## Herfindahl Index of Occupation Attention
+
+Is media attention concentrated on a few stereotypical occupations or
+distributed broadly? We compute a Herfindahl Hirschman Index (HHI) of
+occupation mentions, where high HHI indicates attention concentrated on a few
+occupations.
+
+```{r}
+#| label: fig-hhi
+#| fig-cap: "Monthly concentration of occupation mentions (HHI)"
+#| fig-height: 5
+
+valid_occ_cols <- occ_cols[occ_cols %in% names(corpus_data)]
+
+hhi_monthly <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n = n(),
+    across(all_of(valid_occ_cols), ~ sum(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month))
+
+# Compute HHI per month
+compute_hhi <- function(counts) {
+  total <- sum(counts)
+  if (total == 0) return(NA_real_)
+  shares <- counts / total
+  sum(shares^2)
+}
+
+hhi_monthly$hhi <- apply(hhi_monthly[, valid_occ_cols], 1, compute_hhi)
+hhi_monthly$post <- as.integer(hhi_monthly$year_month >= CHATGPT_DATE)
+
+ggplot(hhi_monthly |> filter(!is.na(hhi)),
+       aes(x = year_month, y = hhi)) +
+  geom_line(color = "steelblue", linewidth = 0.6) +
+  geom_smooth(method = "loess", span = 0.4, se = TRUE,
+              color = "#d7191c", linewidth = 1) +
+  geom_vline(xintercept = CHATGPT_DATE, linetype = "dashed") +
+  annotate("label", x = CHATGPT_DATE, y = max(hhi_monthly$hhi, na.rm = TRUE) * 0.95,
+           label = "ChatGPT", size = 3, fill = "white") +
+  labs(
+    title = "Concentration of Occupation Mentions Over Time",
+    subtitle = "HHI index (higher = attention focused on fewer occupations)",
+    x = NULL, y = "Herfindahl-Hirschman Index",
+    caption = "A rising HHI post ChatGPT would indicate narrowing of the occupation narrative."
+  )
+```
+
+```{r}
+#| label: tbl-hhi-test
+#| tbl-cap: "Test for change in occupation attention concentration after ChatGPT"
+
+hhi_valid <- hhi_monthly |> filter(!is.na(hhi))
+
+if (nrow(hhi_valid) >= 6) {
+  hhi_valid$t <- row_number(hhi_valid$year_month)
+
+  hhi_model <- lm(hhi ~ post + t, data = hhi_valid)
+  hhi_robust <- tryCatch(
+    coeftest(hhi_model, vcov = vcovHAC(hhi_model)),
+    error = function(e) coeftest(hhi_model)
+  )
+
+  hhi_tidy <- tibble(
+    Term     = c("Intercept", "Post ChatGPT", "Time trend"),
+    Estimate = round(hhi_robust[, 1], 4),
+    SE       = round(hhi_robust[, 2], 4),
+    p_value  = format.pval(hhi_robust[, 4], digits = 3)
+  )
+
+  kable(hhi_tidy) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+# Outlet Type Heterogeneity
+
+Do different media types cover different occupations? Tabloid outlets may focus
+on dramatic displacement stories involving visible occupations while business
+outlets may emphasize managerial and analytical roles.
+
+```{r}
+#| label: outlet-classification
+
+outlet_patterns <- tribble(
+  ~pattern,              ~outlet_type,
+  "24sata",              "Tabloid",
+  "index",               "Tabloid",
+  "net\\.hr",            "Tabloid",
+  "jutarnji",            "Quality",
+  "vecernji",            "Quality",
+  "dnevnik",             "Quality",
+  "n1",                  "Quality",
+  "tportal",             "Quality",
+  "telegram",            "Quality",
+  "slobodna.*dalmacija", "Regional",
+  "novi.*list",          "Regional",
+  "hrt",                 "Public",
+  "bug",                 "Tech",
+  "netokracija",         "Tech",
+  "poslovni",            "Business",
+  "lider",               "Business",
+  "forbes.*hr",          "Business"
+)
+
+corpus_data$outlet_type <- "Other"
+for (i in seq_len(nrow(outlet_patterns))) {
+  hit <- stri_detect_regex(
+    stri_trans_tolower(corpus_data$FROM), outlet_patterns$pattern[i]
+  )
+  corpus_data$outlet_type[hit] <- outlet_patterns$outlet_type[i]
+}
+```
+
+```{r}
+#| label: fig-occupation-by-outlet
+#| fig-cap: "Top occupation mentions by outlet type"
+#| fig-height: 8
+
+outlet_types_keep <- c("Tabloid", "Quality", "Tech", "Business")
+
+outlet_occ_profiles <- lapply(outlet_types_keep, function(ot) {
+
+  ot_data <- corpus_data |> filter(outlet_type == ot)
+  if (nrow(ot_data) < 20) return(NULL)
+
+  occ_pcts <- sapply(seq_len(nrow(occupation_dict)), function(i) {
+    col_name <- paste0("occ_", gsub("[^a-zA-Z]", "_", occupation_dict$occupation[i]))
+    if (!col_name %in% names(ot_data)) return(0)
+    sum(ot_data[[col_name]], na.rm = TRUE) / nrow(ot_data) * 100
+  })
+
+  tibble(
+    outlet_type = ot,
+    occupation = occupation_dict$occupation,
+    pct = occ_pcts,
+    ai_exposure = occupation_dict$ai_exposure
+  ) |>
+    filter(pct > 0)
+})
+
+outlet_occ_df <- bind_rows(outlet_occ_profiles)
+
+if (nrow(outlet_occ_df) > 0) {
+  # Top 8 occupations per outlet type
+  outlet_occ_top <- outlet_occ_df |>
+    group_by(outlet_type) |>
+    slice_max(order_by = pct, n = 8) |>
+    ungroup()
+
+  ggplot(outlet_occ_top,
+         aes(x = reorder(occupation, pct), y = pct,
+             fill = factor(ai_exposure, levels = c("High", "Medium", "Low")))) +
+    geom_col(alpha = 0.85) +
+    coord_flip() +
+    facet_wrap(~ outlet_type, scales = "free_y") +
+    scale_fill_manual(values = exposure_colors) +
+    labs(
+      title = "Occupation Focus by Outlet Type",
+      subtitle = "Top 8 mentioned occupations in each media category",
+      x = NULL, y = "% of articles", fill = "AI Exposure"
+    ) +
+    theme(axis.text.y = element_text(size = 8))
+}
+```
+
+# Mismatch Regression
+
+We estimate a cross sectional regression at the occupation level testing
+whether media salience is predicted by theoretical AI exposure after
+controlling for task category.
+
+```{r}
+#| label: tbl-mismatch-regression
+#| tbl-cap: "OLS regression: Determinants of occupation media salience"
+
+reg_occ <- mismatch_data |>
+  mutate(
+    log_mentions = log(mentions + 1),
+    task_category = factor(task_category,
+      levels = c("Non-routine Manual", "Routine Manual", "Routine Cognitive",
+                 "Creative/Analytical", "Non-routine Cognitive"))
+  )
+
+if (nrow(reg_occ) >= 10) {
+
+  # Model 1: Exposure only
+  m1 <- lm(log_mentions ~ exposure_score, data = reg_occ)
+
+  # Model 2: Exposure + task category
+  m2 <- lm(log_mentions ~ exposure_score + task_category, data = reg_occ)
+
+  cat("=== Model 1: Exposure Score Only ===\n")
+  print(summary(m1))
+
+  cat("\n=== Model 2: Exposure Score + Task Category ===\n")
+  print(summary(m2))
+
+  # Combined table
+  m1_tidy <- broom::tidy(m1, conf.int = TRUE) |> mutate(model = "Exposure Only")
+  m2_tidy <- broom::tidy(m2, conf.int = TRUE) |> mutate(model = "Exposure + Task")
+
+  combined <- bind_rows(m1_tidy, m2_tidy) |>
+    mutate(across(c(estimate, std.error, statistic), ~ round(.x, 3)),
+           p.value = format.pval(p.value, digits = 3)) |>
+    select(model, term, estimate, std.error, p.value)
+
+  kable(combined,
+        col.names = c("Model", "Term", "Estimate", "SE", "p-value")) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+# Summary of Findings
+
+```{r}
+#| label: tbl-findings
+#| tbl-cap: "Summary of main results"
+
+n_occupations_detected <- sum(occ_counts$mentions > 0)
+n_articles_with_occ <- sum(rowSums(corpus_data[, valid_occ_cols, drop = FALSE],
+                                    na.rm = TRUE) > 0)
+
+most_mentioned <- occ_counts$occupation[1]
+most_mentioned_pct <- occ_counts$pct[1]
+
+spearman_rho <- round(spearman_test$estimate, 3)
+
+findings <- tibble(
+  Finding = c(
+    "Occupations in dictionary",
+    "Occupations detected (at least 1 mention)",
+    "Articles mentioning any occupation",
+    "Share of corpus with occupation mentions",
+    "Most mentioned occupation",
+    "Spearman correlation (salience vs exposure)",
+    "Most over-represented occupation",
+    "Most under-represented occupation",
+    "Dominant task category in media",
+    "ChatGPT shifted occupation mix"
+  ),
+  Result = c(
+    nrow(occupation_dict),
+    n_occupations_detected,
+    format(n_articles_with_occ, big.mark = ","),
+    paste0(round(n_articles_with_occ / nrow(corpus_data) * 100, 1), "%"),
+    paste0(most_mentioned, " (", most_mentioned_pct, "%)"),
+    paste0(spearman_rho, " (p = ", format.pval(spearman_test$p.value, digits = 3), ")"),
+    mismatch_data$occupation[which.max(mismatch_data$mismatch)],
+    mismatch_data$occupation[which.min(mismatch_data$mismatch)],
+    task_salience$task_category[1],
+    ifelse(any(abs(occ_prepost_df$change_pp) > 1, na.rm = TRUE), "Yes (>1pp shifts observed)", "Modest shifts")
+  )
+)
+
+kable(findings) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Discussion
+
+The analysis reveals the structure of what we call the occupation salience
+mismatch. Media coverage of AI and labour markets does not uniformly reflect
+theoretical predictions about which occupations face the greatest exposure.
+Several patterns emerge.
+
+First, media attention is heavily concentrated. A small number of occupations
+dominate the narrative, as captured by the HHI analysis. This concentration
+means that public perceptions about AI risk are likely anchored to a few
+stereotypical examples rather than informed by the broad distribution of actual
+exposure.
+
+Second, the task category decomposition reveals whether media have absorbed the
+core insight of recent AI economics research, namely that generative AI
+primarily affects non routine cognitive work rather than the routine manual tasks
+targeted by earlier automation technologies. If non routine cognitive
+occupations are underrepresented relative to their exposure, the public
+narrative lags the science.
+
+Third, outlet type heterogeneity matters for information inequality. If tabloid
+outlets emphasize different occupations than business or tech outlets, different
+audience segments receive systematically different signals about which jobs are
+at risk.
+
+The main limitations are that occupation detection relies on keyword dictionaries
+rather than named entity recognition, and that the theoretical exposure
+classification uses a simplified three tier scheme rather than continuous
+scores from Felten et al. or Eloundou et al. Both limitations could be addressed
+in future work by linking to external occupational databases (Croatian
+classification of occupations, NKZ, mapped to ISCO) and using continuous
+exposure measures.
+
+For economics journals, the key selling point of this analysis is the bridge it
+builds between two literatures that have not spoken to each other directly.
+The AI exposure measurement literature (Acemoglu and Restrepo, Felten et al.,
+Eloundou et al.) and the media framing and information economics literature
+(Gentzkow and Shapiro, DellaVigna and Kaplan). By testing whether media
+narratives align with or distort technical exposure estimates, this paper
+addresses a question with real policy implications for labour market adjustment.
+
+# Technical Appendix
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```

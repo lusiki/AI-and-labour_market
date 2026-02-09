@@ -1,0 +1,1326 @@
+---
+title: "Cross-Platform Narrative Propagation in AI Labour Coverage"
+subtitle: "Information Cascades and Platform Heterogeneity in Croatian Digital Media"
+author: "Media Analysis Research"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-summary: "Show code"
+    df-print: paged
+    fig-width: 10
+    fig-height: 6
+    fig-dpi: 300
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# ==========================================================================
+# PACKAGES
+# ==========================================================================
+
+required_packages <- c(
+  "dplyr", "tidyr", "stringr", "stringi", "lubridate", "forcats", "tibble",
+  "ggplot2", "scales", "patchwork", "ggrepel",
+  "knitr", "kableExtra",
+  "vars",          # VAR models and Granger causality
+  "tseries",       # stationarity tests
+  "lmtest",        # Granger tests
+  "sandwich",      # robust SEs
+  "broom",
+  "zoo",
+  "fixest",
+  "entropy"        # information theoretic measures
+)
+
+for (pkg in required_packages) {
+  if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+    install.packages(pkg, quiet = TRUE)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+options(dplyr.summarise.inform = FALSE, scipen = 999)
+
+# --------------------------------------------------------------------------
+# THEME
+# --------------------------------------------------------------------------
+
+theme_econ <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "gray40", size = 11),
+    plot.caption = element_text(color = "gray50", size = 9, hjust = 0),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(size = 11)
+  )
+theme_set(theme_econ)
+
+platform_colors <- c(
+  "web"       = "#2c7bb6",
+  "Facebook"  = "#3b5998",
+  "Twitter"   = "#1da1f2",
+  "Instagram" = "#e1306c",
+  "YouTube"   = "#ff0000",
+  "TikTok"    = "#000000",
+  "Reddit"    = "#ff4500",
+  "forum"     = "#7f8c8d",
+  "Other"     = "gray60"
+)
+
+frame_colors <- c(
+  "JOB_LOSS"        = "#e41a1c",
+  "JOB_CREATION"    = "#4daf4a",
+  "TRANSFORMATION"  = "#ff7f00",
+  "SKILLS"          = "#377eb8",
+  "REGULATION"      = "#984ea3",
+  "PRODUCTIVITY"    = "#f781bf",
+  "INEQUALITY"      = "#a65628",
+  "FEAR_RESISTANCE" = "#999999"
+)
+```
+
+# Introduction
+
+Information economics treats news as a signal that agents use to update beliefs.
+In standard models of Bayesian updating, the source and channel of information
+are irrelevant conditional on signal content. However, a growing empirical
+literature documents that the platform through which information arrives
+systematically shapes both its content and its reception (Gentzkow and Shapiro
+2010, Allcott and Gentzkow 2017, Levy 2021). If the same underlying event
+(the emergence of generative AI) produces different narratives on different
+platforms, and if different population segments consume information from
+different platforms, then platform heterogeneity in framing becomes a source of
+belief heterogeneity with real economic consequences.
+
+This paper studies how AI and labour market narratives propagate across digital
+media platforms in Croatia. We exploit a unique database covering web portals,
+Facebook, Twitter/X, Instagram, YouTube, TikTok, Reddit, and forum content from
+2021 to 2024. Three questions guide the analysis.
+
+First, do platforms differ systematically in how they frame AI and labour? We
+test whether legacy web media leads social media in narrative construction or
+whether social platforms generate independent framing.
+
+Second, do narratives cascade across platforms? We estimate vector
+autoregression (VAR) models and Granger causality tests at the weekly level to
+identify directional information flows between platforms.
+
+Third, does the ChatGPT shock propagate with platform specific lags and
+intensities? We estimate platform specific impulse response functions to trace
+how the information shock traveled through the media ecosystem.
+
+The contribution bridges information economics with the emerging literature on
+multi platform media markets. By documenting that the same labour market topic
+receives fundamentally different treatment across platforms, and that these
+treatments follow predictable propagation patterns, we provide evidence that
+platform structure shapes the information environment for labour market
+adjustment.
+
+# Data
+
+## Corpus Loading and Preparation
+
+```{r}
+#| label: load-corpus
+
+CORPUS_PATH <-"C:/Users/lsikic/Desktop/AI_labour/data/raw/ai_labour_corpus.rds"
+
+if (!file.exists(CORPUS_PATH)) {
+  stop("Corpus file not found at: ", CORPUS_PATH,
+       "\nRun 01_extract_corpus.R first.")
+}
+
+corpus_raw <- readRDS(CORPUS_PATH)
+
+corpus_data <- corpus_raw |>
+  mutate(
+    DATE = as.Date(DATE),
+    .text_lower = stri_trans_tolower(
+      paste(coalesce(TITLE, ""), coalesce(FULL_TEXT, ""), sep = " ")
+    ),
+    year       = year(DATE),
+    month      = month(DATE),
+    year_month = floor_date(DATE, "month"),
+    year_week  = floor_date(DATE, "week", week_start = 1),
+    quarter    = quarter(DATE),
+    word_count = stri_count_regex(FULL_TEXT, "\\S+")
+  ) |>
+  filter(!is.na(DATE), DATE < as.Date("2024-01-01")) |>
+  distinct(TITLE, DATE, FROM, .keep_all = TRUE) |>
+  arrange(DATE)
+
+CHATGPT_DATE <- as.Date("2022-12-01")
+corpus_data$post_chatgpt <- as.integer(corpus_data$DATE >= CHATGPT_DATE)
+
+cat("Corpus loaded:", format(nrow(corpus_data), big.mark = ","), "articles\n")
+cat("Date range:", as.character(min(corpus_data$DATE)), "to",
+    as.character(max(corpus_data$DATE)), "\n")
+```
+
+## Platform Landscape
+
+```{r}
+#| label: platform-overview
+
+# Standardize SOURCE_TYPE
+corpus_data <- corpus_data |>
+  mutate(
+    platform = case_when(
+      tolower(SOURCE_TYPE) %in% c("web", "internet") ~ "web",
+      tolower(SOURCE_TYPE) %in% c("facebook", "fb")  ~ "Facebook",
+      tolower(SOURCE_TYPE) %in% c("twitter", "x")    ~ "Twitter",
+      tolower(SOURCE_TYPE) == "instagram"             ~ "Instagram",
+      tolower(SOURCE_TYPE) == "youtube"               ~ "YouTube",
+      tolower(SOURCE_TYPE) == "tiktok"                ~ "TikTok",
+      tolower(SOURCE_TYPE) == "reddit"                ~ "Reddit",
+      tolower(SOURCE_TYPE) %in% c("forum", "forum.hr") ~ "forum",
+      TRUE ~ "Other"
+    )
+  )
+
+platform_dist <- corpus_data |>
+  count(platform, sort = TRUE) |>
+  mutate(pct = round(n / sum(n) * 100, 1))
+
+kable(platform_dist, col.names = c("Platform", "Articles", "% of Corpus")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: fig-platform-distribution
+#| fig-cap: "Corpus composition by platform"
+#| fig-height: 4
+
+ggplot(platform_dist, aes(x = reorder(platform, n), y = n, fill = platform)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = paste0(pct, "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_fill_manual(values = platform_colors, guide = "none") +
+  labs(
+    title = "Corpus Composition by Platform",
+    x = NULL, y = "Number of articles"
+  ) +
+  expand_limits(y = max(platform_dist$n) * 1.15)
+```
+
+## Frame and Actor Detection
+
+```{r}
+#| label: frame-actor-detection
+
+# --- FRAMES ---
+frame_dictionaries <- list(
+  JOB_LOSS = c(
+    "gubitak posla", "gubitak poslova", "gubitak radnih mjesta",
+    "ukidanje radnih mjesta", "ukidanje poslova",
+    "zamjena radnika", "zamijeniti radnike", "zamjenjuje radnike",
+    "istisnuti radnike", "istiskivanje",
+    "otpuštanje", "otpuštanja",
+    "nestanak poslova", "nestanak zanimanja",
+    "suvišan", "suvišni radnici",
+    "tehnološka nezaposlenost",
+    "krade poslove", "krade posao", "oduzima posao",
+    "prijeti radnim mjestima", "ugrožava radna mjesta"
+  ),
+  JOB_CREATION = c(
+    "nova radna mjesta", "novi poslovi", "novo zapošljavanje",
+    "nove prilike", "nove mogućnosti",
+    "stvaranje poslova",
+    "rast zapošljavanja", "povećanje zapošljavanja",
+    "nova zanimanja", "nova karijera",
+    "potražnja za stručnjacima", "nedostatak radnika",
+    "deficitarna zanimanja"
+  ),
+  TRANSFORMATION = c(
+    "transformacija rada", "transformacija poslova",
+    "promjena načina rada", "mijenja način rada",
+    "prilagodba", "prilagoditi se", "prilagođavanje",
+    "nadopunjuje", "komplementar",
+    "suradnja čovjeka i", "čovjek i stroj",
+    "evolucija poslova", "evolucija rada",
+    "nove uloge", "promijenjena uloga",
+    "ne zamjenjuje nego"
+  ),
+  SKILLS = c(
+    "prekvalifikacija", "dokvalifikacija",
+    "cjeloživotno učenje",
+    "digitalna pismenost", "digitalne vještine",
+    "nova znanja", "nove vještine",
+    "jaz u vještinama", "nedostatak vještina",
+    "reskilling", "upskilling",
+    "obrazovanje za budućnost",
+    "stem vještine", "programiranje"
+  ),
+  REGULATION = c(
+    "regulacija ai", "regulativa",
+    "zakon o ai", "zakonski okvir",
+    "eu regulativa", "ai act",
+    "etička pitanja", "etika ai",
+    "sindikat", "sindikalni",
+    "zaštita radnika", "prava radnika",
+    "socijalna zaštita"
+  ),
+  PRODUCTIVITY = c(
+    "produktivnost", "povećanje produktivnosti",
+    "učinkovitost", "efikasnost",
+    "ušteda", "smanjenje troškova",
+    "konkurentnost", "konkurentna prednost",
+    "gospodarski rast", "ekonomski rast",
+    "optimizacija"
+  ),
+  INEQUALITY = c(
+    "nejednakost", "rastuća nejednakost",
+    "digitalni jaz", "tehnološki jaz",
+    "socijalna nejednakost",
+    "polarizacija",
+    "jaz u plaćama",
+    "ranjive skupine", "marginalizirani",
+    "srednja klasa", "nestanak srednje klase"
+  ),
+  FEAR_RESISTANCE = c(
+    "strah od ai", "strah od gubitka", "strah od tehnologij",
+    "prijetnja", "opasnost",
+    "apokalipsa", "distopija", "katastrofa",
+    "upozorenje", "alarm",
+    "otpor prema", "protivljenje",
+    "neizvjesnost", "nesigurnost",
+    "panika", "zabrinutost"
+  )
+)
+
+for (fname in names(frame_dictionaries)) {
+  pattern <- paste(frame_dictionaries[[fname]], collapse = "|")
+  corpus_data[[paste0("frame_", fname)]] <- stri_detect_regex(
+    corpus_data$.text_lower, pattern
+  )
+}
+
+frame_cols <- paste0("frame_", names(frame_dictionaries))
+
+# Composite indices
+corpus_data$threat <- as.integer(
+  corpus_data$frame_JOB_LOSS | corpus_data$frame_FEAR_RESISTANCE |
+  corpus_data$frame_INEQUALITY
+)
+corpus_data$opportunity <- as.integer(
+  corpus_data$frame_JOB_CREATION | corpus_data$frame_PRODUCTIVITY |
+  corpus_data$frame_TRANSFORMATION
+)
+
+# --- ACTORS ---
+actor_dictionaries <- list(
+  WORKERS = c("radnik", "radnici", "radnica", "zaposlenik", "zaposlenici",
+              "djelatnik", "djelatnici"),
+  EMPLOYERS = c("poslodavac", "poslodavci", "tvrtka", "tvrtke", "poduzeće",
+                "kompanija", "korporacija"),
+  TECH_COMPANIES = c("openai", "google", "microsoft", "meta", "amazon",
+                     "nvidia", "chatgpt", "deepmind"),
+  POLICY_MAKERS = c("vlada", "ministar", "ministarstvo", "sabor",
+                    "eu komisija", "europska komisija"),
+  EXPERTS = c("stručnjak", "ekspert", "znanstvenik", "istraživač",
+              "analitičar", "profesor"),
+  UNIONS = c("sindikat", "sindikalni")
+)
+
+for (aname in names(actor_dictionaries)) {
+  pattern <- paste(actor_dictionaries[[aname]], collapse = "|")
+  corpus_data[[paste0("actor_", aname)]] <- stri_detect_regex(
+    corpus_data$.text_lower, pattern
+  )
+}
+
+actor_cols <- paste0("actor_", names(actor_dictionaries))
+```
+
+# Platform Fingerprints
+
+## Content Characteristics by Platform
+
+```{r}
+#| label: tbl-platform-content
+#| tbl-cap: "Content characteristics by platform"
+
+platform_content <- corpus_data |>
+  group_by(platform) |>
+  summarise(
+    n = n(),
+    median_words = median(word_count, na.rm = TRUE),
+    mean_words = round(mean(word_count, na.rm = TRUE)),
+    pct_pre_chatgpt = round(sum(post_chatgpt == 0) / n() * 100, 1),
+    pct_post_chatgpt = round(sum(post_chatgpt == 1) / n() * 100, 1),
+    unique_sources = n_distinct(FROM),
+    .groups = "drop"
+  ) |>
+  filter(n >= 10) |>
+  arrange(desc(n))
+
+kable(platform_content,
+      col.names = c("Platform", "N", "Median Words", "Mean Words",
+                     "% Pre ChatGPT", "% Post ChatGPT", "Unique Sources")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Frame Profiles by Platform
+
+```{r}
+#| label: fig-frame-fingerprints
+#| fig-cap: "Frame fingerprints by platform (percentage of articles containing each frame)"
+#| fig-height: 8
+
+# Only platforms with sufficient volume
+platforms_keep <- platform_dist |> filter(n >= 30) |> pull(platform)
+
+platform_frames <- corpus_data |>
+  filter(platform %in% platforms_keep) |>
+  group_by(platform) |>
+  summarise(
+    n = n(),
+    across(all_of(frame_cols), ~ sum(.x, na.rm = TRUE) / n() * 100),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols = all_of(frame_cols),
+    names_to = "frame",
+    values_to = "pct"
+  ) |>
+  mutate(frame = str_remove(frame, "frame_"))
+
+ggplot(platform_frames, aes(x = frame, y = pct, fill = platform)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  scale_fill_manual(values = platform_colors) +
+  labs(
+    title = "Frame Prevalence by Platform",
+    subtitle = "Each platform has a distinct framing fingerprint",
+    x = NULL, y = "% of articles", fill = "Platform"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| label: fig-frame-heatmap
+#| fig-cap: "Platform frame heatmap (row normalized)"
+#| fig-height: 5
+
+platform_frame_wide <- platform_frames |>
+  pivot_wider(names_from = frame, values_from = pct)
+
+# Matrix for heatmap
+hm_data <- platform_frames |>
+  filter(platform %in% platforms_keep)
+
+ggplot(hm_data, aes(x = frame, y = platform, fill = pct)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(pct, 1)), size = 3) +
+  scale_fill_gradient2(low = "white", mid = "#abd9e9", high = "#2c7bb6",
+                       midpoint = median(hm_data$pct)) +
+  labs(
+    title = "Platform x Frame Heatmap",
+    x = NULL, y = NULL, fill = "% of articles"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Threat vs Opportunity Ratio by Platform
+
+```{r}
+#| label: fig-threat-opportunity-platform
+#| fig-cap: "Threat to opportunity ratio by platform"
+#| fig-height: 5
+
+platform_composite <- corpus_data |>
+  filter(platform %in% platforms_keep) |>
+  group_by(platform) |>
+  summarise(
+    n = n(),
+    threat_pct = sum(threat, na.rm = TRUE) / n() * 100,
+    opportunity_pct = sum(opportunity, na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  mutate(
+    ratio = threat_pct / pmax(opportunity_pct, 0.1),
+    net_tone = opportunity_pct - threat_pct
+  )
+
+ggplot(platform_composite, aes(x = reorder(platform, ratio), y = ratio,
+                                fill = platform)) +
+  geom_col(alpha = 0.85) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  coord_flip() +
+  scale_fill_manual(values = platform_colors, guide = "none") +
+  labs(
+    title = "Threat to Opportunity Ratio by Platform",
+    subtitle = "Values above 1 indicate threat framing dominates opportunity framing",
+    x = NULL, y = "Threat / Opportunity ratio",
+    caption = "Ratio > 1 means more threat than opportunity framing."
+  )
+```
+
+## Statistical Test for Platform Framing Differences
+
+```{r}
+#| label: tbl-platform-chi2
+#| tbl-cap: "Chi squared tests for platform independence of framing"
+
+chi2_results <- lapply(names(frame_dictionaries), function(fname) {
+
+  tbl <- corpus_data |>
+    filter(platform %in% platforms_keep) |>
+    mutate(has_frame = .data[[paste0("frame_", fname)]]) |>
+    count(platform, has_frame) |>
+    pivot_wider(names_from = has_frame, values_from = n, values_fill = 0)
+
+  mat <- as.matrix(tbl[, -1])
+  rownames(mat) <- tbl$platform
+
+  test <- tryCatch(chisq.test(mat), error = function(e) NULL)
+  if (is.null(test)) return(NULL)
+
+  tibble(
+    Frame = fname,
+    Chi2 = round(test$statistic, 2),
+    df = test$parameter,
+    p_value = format.pval(test$p.value, digits = 3),
+    Platforms_differ = ifelse(test$p.value < 0.05, "Yes", "No")
+  )
+})
+
+chi2_tbl <- bind_rows(chi2_results)
+
+kable(chi2_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Temporal Dynamics by Platform
+
+## Weekly Volume Series
+
+```{r}
+#| label: fig-platform-weekly
+#| fig-cap: "Weekly article volume by platform"
+#| fig-height: 10
+
+platform_weekly <- corpus_data |>
+  filter(platform %in% platforms_keep) |>
+  count(year_week, platform) |>
+  filter(!is.na(year_week))
+
+ggplot(platform_weekly, aes(x = year_week, y = n)) +
+  geom_line(aes(color = platform), linewidth = 0.4, alpha = 0.5) +
+  geom_smooth(method = "loess", span = 0.2, se = FALSE,
+              color = "black", linewidth = 0.8) +
+  geom_vline(xintercept = CHATGPT_DATE, linetype = "dashed", color = "red") +
+  facet_wrap(~ platform, ncol = 2, scales = "free_y") +
+  scale_color_manual(values = platform_colors, guide = "none") +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b\n%Y") +
+  labs(
+    title = "Weekly Article Volume by Platform",
+    subtitle = "Red dashed line marks ChatGPT launch",
+    x = NULL, y = "Articles per week"
+  ) +
+  theme(axis.text.x = element_text(size = 8))
+```
+
+## Platform Specific ChatGPT Response
+
+```{r}
+#| label: tbl-platform-shock
+#| tbl-cap: "Platform specific response to ChatGPT launch"
+
+platform_shock <- lapply(platforms_keep, function(p) {
+
+  pdata <- corpus_data |>
+    filter(platform == p) |>
+    count(year_week) |>
+    filter(!is.na(year_week)) |>
+    mutate(
+      post = as.integer(year_week >= CHATGPT_DATE),
+      t = as.numeric(difftime(year_week, min(year_week), units = "days")) / 7
+    )
+
+  if (nrow(pdata) < 10) return(NULL)
+
+  model <- lm(n ~ post + t, data = pdata)
+  robust <- tryCatch(
+    coeftest(model, vcov = vcovHAC(model)),
+    error = function(e) coeftest(model)
+  )
+
+  pre_mean <- mean(pdata$n[pdata$post == 0])
+  post_mean <- mean(pdata$n[pdata$post == 1])
+
+  tibble(
+    Platform = p,
+    Pre_weekly_avg = round(pre_mean, 1),
+    Post_weekly_avg = round(post_mean, 1),
+    Multiplier = round(post_mean / max(pre_mean, 0.01), 1),
+    ATE = round(robust["post", 1], 2),
+    SE = round(robust["post", 2], 2),
+    p_value = round(robust["post", 4], 3)
+  )
+})
+
+platform_shock_tbl <- bind_rows(platform_shock) |>
+  arrange(desc(Multiplier))
+
+kable(platform_shock_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Response Lag Estimation
+
+Different platforms may respond to the ChatGPT shock with different lags. We
+estimate when each platform reached its peak response and how quickly
+attention built up.
+
+```{r}
+#| label: fig-response-lag
+#| fig-cap: "Cumulative response to ChatGPT shock by platform (first 26 weeks post launch)"
+#| fig-height: 6
+
+# Compute weekly volume normalized to pre-period average
+response_curves <- lapply(platforms_keep, function(p) {
+
+  pdata <- corpus_data |>
+    filter(platform == p) |>
+    count(year_week) |>
+    filter(!is.na(year_week))
+
+  pre_avg <- mean(pdata$n[pdata$year_week < CHATGPT_DATE])
+  if (pre_avg == 0) pre_avg <- 1
+
+  pdata |>
+    filter(year_week >= CHATGPT_DATE,
+           year_week <= CHATGPT_DATE + weeks(26)) |>
+    mutate(
+      weeks_since = as.numeric(difftime(year_week, CHATGPT_DATE, units = "weeks")),
+      normalized = n / pre_avg,
+      cumulative = cumsum(n) / sum(n),
+      platform = p
+    )
+})
+
+response_df <- bind_rows(response_curves)
+
+if (nrow(response_df) > 0) {
+  ggplot(response_df, aes(x = weeks_since, y = cumulative, color = platform)) +
+    geom_line(linewidth = 1) +
+    scale_color_manual(values = platform_colors) +
+    labs(
+      title = "Cumulative Response Curves by Platform",
+      subtitle = "First 26 weeks after ChatGPT launch (faster rise = quicker adoption)",
+      x = "Weeks since ChatGPT launch",
+      y = "Cumulative share of post-shock articles",
+      color = "Platform"
+    )
+}
+```
+
+```{r}
+#| label: tbl-peak-timing
+#| tbl-cap: "Peak response timing by platform (week of maximum weekly volume)"
+
+peak_timing <- lapply(platforms_keep, function(p) {
+
+  pdata <- corpus_data |>
+    filter(platform == p, post_chatgpt == 1) |>
+    count(year_week) |>
+    filter(!is.na(year_week))
+
+  if (nrow(pdata) == 0) return(NULL)
+
+  peak_week <- pdata$year_week[which.max(pdata$n)]
+  weeks_to_peak <- as.numeric(difftime(peak_week, CHATGPT_DATE, units = "weeks"))
+
+  tibble(
+    Platform = p,
+    Peak_week = as.character(peak_week),
+    Weeks_to_peak = round(weeks_to_peak, 0),
+    Peak_volume = max(pdata$n)
+  )
+})
+
+peak_tbl <- bind_rows(peak_timing) |> arrange(Weeks_to_peak)
+
+kable(peak_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Granger Causality and Information Flows
+
+## Setup
+
+We test for Granger causality between platform specific weekly volume series.
+If platform A Granger causes platform B, information appearing on A predicts
+future information on B, controlling for Bs own history. This reveals the
+directional structure of narrative propagation.
+
+```{r}
+#| label: var-setup
+
+# Build weekly panel: platform x week
+# Only keep platforms with sufficient continuous data
+min_weeks <- 50
+
+platform_weekly_wide <- corpus_data |>
+  filter(platform %in% platforms_keep) |>
+  count(year_week, platform) |>
+  filter(!is.na(year_week)) |>
+  pivot_wider(names_from = platform, values_from = n, values_fill = 0) |>
+  arrange(year_week)
+
+# Check which platforms have enough data
+platform_coverage <- colSums(platform_weekly_wide[, -1] > 0)
+var_platforms <- names(platform_coverage[platform_coverage >= min_weeks])
+
+cat("Platforms with sufficient weekly coverage for VAR:\n")
+cat(paste(var_platforms, collapse = ", "), "\n")
+cat("Total weeks:", nrow(platform_weekly_wide), "\n")
+```
+
+## Stationarity Tests
+
+VAR estimation requires stationary series. We apply Augmented Dickey Fuller
+tests and first difference if needed.
+
+```{r}
+#| label: tbl-stationarity
+#| tbl-cap: "Augmented Dickey Fuller tests for stationarity (weekly platform volumes)"
+
+stationarity_results <- lapply(var_platforms, function(p) {
+
+  series <- platform_weekly_wide[[p]]
+  if (length(series) < 20 || all(series == 0)) return(NULL)
+
+  adf_level <- tryCatch(
+    adf.test(series, alternative = "stationary"),
+    error = function(e) list(statistic = NA, p.value = NA)
+  )
+
+  diff_series <- diff(series)
+  adf_diff <- tryCatch(
+    adf.test(diff_series, alternative = "stationary"),
+    error = function(e) list(statistic = NA, p.value = NA)
+  )
+
+  tibble(
+    Platform = p,
+    ADF_level = round(adf_level$statistic, 3),
+    p_level = round(adf_level$p.value, 3),
+    Stationary_level = ifelse(adf_level$p.value < 0.05, "Yes", "No"),
+    ADF_diff = round(adf_diff$statistic, 3),
+    p_diff = round(adf_diff$p.value, 3),
+    Stationary_diff = ifelse(adf_diff$p.value < 0.05, "Yes", "No")
+  )
+})
+
+stationarity_tbl <- bind_rows(stationarity_results)
+
+kable(stationarity_tbl) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Pairwise Granger Causality
+
+```{r}
+#| label: granger-tests
+
+# Run pairwise Granger causality tests
+granger_pairs <- expand.grid(
+  cause = var_platforms,
+  effect = var_platforms,
+  stringsAsFactors = FALSE
+) |>
+  filter(cause != effect)
+
+granger_results <- lapply(seq_len(nrow(granger_pairs)), function(i) {
+
+  cause_var  <- granger_pairs$cause[i]
+  effect_var <- granger_pairs$effect[i]
+
+  cause_series  <- platform_weekly_wide[[cause_var]]
+  effect_series <- platform_weekly_wide[[effect_var]]
+
+  if (is.null(cause_series) || is.null(effect_series)) return(NULL)
+  if (length(cause_series) < 20) return(NULL)
+
+  # Use first differences for non-stationary series
+  cause_d  <- diff(cause_series)
+  effect_d <- diff(effect_series)
+
+  # Test at multiple lags
+  best_result <- NULL
+  for (lag in c(1, 2, 4)) {
+    test_data <- data.frame(y = effect_d, x = cause_d)
+    if (nrow(test_data) <= lag * 2 + 2) next
+
+    test <- tryCatch(
+      grangertest(y ~ x, order = lag, data = test_data),
+      error = function(e) NULL
+    )
+
+    if (!is.null(test)) {
+      f_stat <- test$F[2]
+      p_val <- test$`Pr(>F)`[2]
+
+      if (is.null(best_result) || (!is.na(p_val) && p_val < best_result$p_value)) {
+        best_result <- tibble(
+          Cause = cause_var,
+          Effect = effect_var,
+          Lag = lag,
+          F_stat = round(f_stat, 2),
+          p_value = round(p_val, 4)
+        )
+      }
+    }
+  }
+
+  best_result
+})
+
+granger_tbl <- bind_rows(granger_results) |>
+  arrange(p_value)
+```
+
+```{r}
+#| label: tbl-granger-significant
+#| tbl-cap: "Significant Granger causality pairs (p < 0.10)"
+
+granger_sig <- granger_tbl |>
+  filter(p_value < 0.10) |>
+  mutate(
+    Significance = case_when(
+      p_value < 0.01 ~ "***",
+      p_value < 0.05 ~ "**",
+      p_value < 0.10 ~ "*",
+      TRUE ~ ""
+    ),
+    Direction = paste(Cause, "->", Effect)
+  )
+
+if (nrow(granger_sig) > 0) {
+  kable(granger_sig |> dplyr::select(Direction, Lag, F_stat, p_value, Significance)) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+} else {
+  cat("No significant Granger causality pairs found at p < 0.10.\n")
+  cat("Showing top 10 pairs by p-value instead:\n\n")
+  kable(head(granger_tbl, 10)) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+## Information Flow Network
+
+```{r}
+#| label: fig-information-flow
+#| fig-cap: "Directed information flow network between platforms"
+#| fig-height: 7
+
+# Build adjacency matrix from Granger results
+if (nrow(granger_tbl) > 0) {
+
+  # Use -log(p-value) as edge weight
+  flow_matrix <- granger_tbl |>
+    mutate(
+      strength = -log10(pmax(p_value, 0.001)),
+      significant = p_value < 0.10
+    )
+
+  # Visualize as heatmap (directed: row causes column)
+  flow_wide <- granger_tbl |>
+    mutate(neg_log_p = -log10(pmax(p_value, 0.001))) |>
+    dplyr::select(Cause, Effect, neg_log_p) |>
+    pivot_wider(names_from = Effect, values_from = neg_log_p, values_fill = 0)
+
+  flow_mat <- as.matrix(flow_wide[, -1])
+  rownames(flow_mat) <- flow_wide$Cause
+
+  # Heatmap with ggplot
+  flow_plot_data <- granger_tbl |>
+    mutate(
+      neg_log_p = -log10(pmax(p_value, 0.001)),
+      sig_label = ifelse(p_value < 0.10,
+                         paste0(round(neg_log_p, 1), "*"), round(neg_log_p, 1))
+    )
+
+  ggplot(flow_plot_data, aes(x = Effect, y = Cause, fill = neg_log_p)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sig_label), size = 3) +
+    scale_fill_gradient2(low = "white", mid = "#abd9e9", high = "#d7191c",
+                         midpoint = 1.3,
+                         name = expression(-log[10](p))) +
+    labs(
+      title = "Information Flow Between Platforms",
+      subtitle = "Row platform Granger causes column platform (* = p < 0.10)",
+      x = "Effect (receives information)", y = "Cause (sends information)"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+## Net Information Flow Score
+
+Which platforms are net senders vs net receivers of narrative?
+
+```{r}
+#| label: fig-net-flow
+#| fig-cap: "Net information flow score by platform (positive = net sender)"
+#| fig-height: 4
+
+if (nrow(granger_tbl) > 0) {
+
+  net_flow <- granger_tbl |>
+    filter(p_value < 0.10) |>
+    mutate(strength = -log10(pmax(p_value, 0.001)))
+
+  outgoing <- net_flow |>
+    group_by(platform = Cause) |>
+    summarise(out_strength = sum(strength), out_count = n(), .groups = "drop")
+
+  incoming <- net_flow |>
+    group_by(platform = Effect) |>
+    summarise(in_strength = sum(strength), in_count = n(), .groups = "drop")
+
+  net_scores <- full_join(outgoing, incoming, by = "platform") |>
+    replace_na(list(out_strength = 0, in_strength = 0,
+                    out_count = 0, in_count = 0)) |>
+    mutate(
+      net_score = out_strength - in_strength,
+      net_count = out_count - in_count,
+      role = ifelse(net_score > 0, "Net Sender", "Net Receiver")
+    )
+
+  ggplot(net_scores, aes(x = reorder(platform, net_score), y = net_score,
+                          fill = role)) +
+    geom_col(alpha = 0.85) +
+    geom_hline(yintercept = 0, color = "gray30") +
+    coord_flip() +
+    scale_fill_manual(values = c("Net Sender" = "#2c7bb6", "Net Receiver" = "#e41a1c")) +
+    labs(
+      title = "Net Information Flow Score",
+      subtitle = "Positive values indicate platform is a net sender of narrative",
+      x = NULL, y = "Net flow (outgoing - incoming strength)", fill = NULL
+    )
+}
+```
+
+# Frame Propagation
+
+Do specific frames propagate differently across platforms? We test Granger
+causality for the threat and opportunity composite indices separately.
+
+```{r}
+#| label: frame-propagation
+
+# Weekly threat share by platform
+frame_weekly <- corpus_data |>
+  filter(platform %in% var_platforms) |>
+  group_by(year_week, platform) |>
+  summarise(
+    n = n(),
+    threat_share = sum(threat, na.rm = TRUE) / n(),
+    opportunity_share = sum(opportunity, na.rm = TRUE) / n(),
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_week))
+
+# Build wide format for each frame index
+threat_wide <- frame_weekly |>
+  dplyr::select(year_week, platform, threat_share) |>
+  pivot_wider(names_from = platform, values_from = threat_share, values_fill = 0) |>
+  arrange(year_week)
+
+opportunity_wide <- frame_weekly |>
+  dplyr::select(year_week, platform, opportunity_share) |>
+  pivot_wider(names_from = platform, values_from = opportunity_share, values_fill = 0) |>
+  arrange(year_week)
+```
+
+```{r}
+#| label: tbl-threat-granger
+#| tbl-cap: "Granger causality for threat frame share (selected significant pairs)"
+
+run_frame_granger <- function(wide_df, frame_label) {
+
+  platforms_avail <- setdiff(names(wide_df), "year_week")
+  pairs <- expand.grid(cause = platforms_avail, effect = platforms_avail,
+                       stringsAsFactors = FALSE) |>
+    filter(cause != effect)
+
+  results <- lapply(seq_len(nrow(pairs)), function(i) {
+    cause_s <- diff(wide_df[[pairs$cause[i]]])
+    effect_s <- diff(wide_df[[pairs$effect[i]]])
+
+    if (length(cause_s) < 15) return(NULL)
+
+    test_data <- data.frame(y = effect_s, x = cause_s)
+    test <- tryCatch(
+      grangertest(y ~ x, order = 2, data = test_data),
+      error = function(e) NULL
+    )
+    if (is.null(test)) return(NULL)
+
+    tibble(
+      Frame = frame_label,
+      Cause = pairs$cause[i],
+      Effect = pairs$effect[i],
+      F_stat = round(test$F[2], 2),
+      p_value = round(test$`Pr(>F)`[2], 4)
+    )
+  })
+
+  bind_rows(results)
+}
+
+threat_granger <- run_frame_granger(threat_wide, "Threat")
+opp_granger <- run_frame_granger(opportunity_wide, "Opportunity")
+
+frame_granger_all <- bind_rows(threat_granger, opp_granger) |>
+  arrange(p_value)
+
+frame_granger_sig <- frame_granger_all |> filter(p_value < 0.10)
+
+if (nrow(frame_granger_sig) > 0) {
+  kable(head(frame_granger_sig, 20),
+        col.names = c("Frame", "Cause", "Effect", "F-stat", "p-value")) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+} else {
+  cat("No significant frame Granger causality pairs. Showing top results:\n\n")
+  kable(head(frame_granger_all, 15)) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+# VAR Model Estimation
+
+We estimate a reduced form VAR for the major platforms to quantify dynamic
+interdependence and compute impulse response functions.
+
+```{r}
+#| label: var-estimation
+
+# Select top platforms by volume for VAR (keep it tractable)
+top_var_platforms <- platform_dist |>
+  filter(platform %in% var_platforms) |>
+  head(4) |>
+  pull(platform)
+
+if (length(top_var_platforms) >= 2) {
+
+  var_data <- platform_weekly_wide |>
+    dplyr::select(year_week, all_of(top_var_platforms))
+
+  # First differences
+  var_matrix <- as.data.frame(lapply(var_data[, -1], diff))
+  var_matrix <- var_matrix[complete.cases(var_matrix), ]
+
+  # Select lag order
+  lag_select <- VARselect(var_matrix, lag.max = 8, type = "const")
+
+  cat("=== VAR Lag Selection ===\n")
+  print(lag_select$selection)
+
+  optimal_lag <- max(1, min(lag_select$selection["AIC(n)"], 4))
+  cat("\nUsing lag:", optimal_lag, "\n")
+
+  # Estimate VAR
+  var_model <- VAR(var_matrix, p = optimal_lag, type = "const")
+
+  cat("\n=== VAR Summary ===\n")
+  cat("Endogenous variables:", paste(top_var_platforms, collapse = ", "), "\n")
+  cat("Observations:", nrow(var_matrix), "\n")
+  cat("Lag order:", optimal_lag, "\n")
+}
+```
+
+## Impulse Response Functions
+
+```{r}
+#| label: fig-irf
+#| fig-cap: "Impulse response functions (orthogonalized, 12 week horizon)"
+#| fig-height: 10
+
+if (exists("var_model")) {
+
+  irf_result <- irf(var_model, n.ahead = 12, ortho = TRUE, ci = 0.90)
+
+  # Extract and plot IRFs
+  irf_plots <- list()
+
+  for (impulse_var in top_var_platforms) {
+    irf_data_list <- lapply(top_var_platforms, function(response_var) {
+
+      idx <- which(names(irf_result$irf) == impulse_var)
+      if (length(idx) == 0) return(NULL)
+
+      resp_idx <- which(colnames(irf_result$irf[[idx]]) == response_var)
+      if (length(resp_idx) == 0) return(NULL)
+
+      tibble(
+        horizon = 0:12,
+        response = irf_result$irf[[idx]][, resp_idx],
+        lower = irf_result$Lower[[idx]][, resp_idx],
+        upper = irf_result$Upper[[idx]][, resp_idx],
+        impulse = impulse_var,
+        response_var = response_var
+      )
+    })
+
+    irf_plots[[impulse_var]] <- bind_rows(irf_data_list)
+  }
+
+  irf_all <- bind_rows(irf_plots)
+
+  if (nrow(irf_all) > 0) {
+    ggplot(irf_all, aes(x = horizon, y = response)) +
+      geom_hline(yintercept = 0, color = "gray50", linetype = "dashed") +
+      geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.15, fill = "steelblue") +
+      geom_line(color = "steelblue", linewidth = 0.8) +
+      facet_grid(impulse ~ response_var,
+                 labeller = labeller(impulse = function(x) paste("Shock to:", x),
+                                     response_var = function(x) paste("Response of:", x))) +
+      labs(
+        title = "Impulse Response Functions",
+        subtitle = "90% confidence bands, orthogonalized shocks, 12 week horizon",
+        x = "Weeks", y = "Response"
+      ) +
+      theme(strip.text = element_text(size = 9))
+  }
+}
+```
+
+## Forecast Error Variance Decomposition
+
+```{r}
+#| label: fig-fevd
+#| fig-cap: "Forecast error variance decomposition at 12 week horizon"
+#| fig-height: 6
+
+if (exists("var_model")) {
+
+  fevd_result <- fevd(var_model, n.ahead = 12)
+
+  # Extract final horizon decomposition
+  fevd_final <- lapply(names(fevd_result), function(resp) {
+    fv <- fevd_result[[resp]]
+    tibble(
+      response = resp,
+      source = colnames(fv),
+      share = fv[nrow(fv), ]
+    )
+  })
+
+  fevd_df <- bind_rows(fevd_final)
+
+  ggplot(fevd_df, aes(x = response, y = share * 100, fill = source)) +
+    geom_col(alpha = 0.85) +
+    scale_fill_manual(values = platform_colors) +
+    labs(
+      title = "Variance Decomposition at 12 Week Horizon",
+      subtitle = "How much of each platforms variation is explained by other platforms?",
+      x = "Response variable", y = "% of forecast error variance", fill = "Source"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+# Sentiment Propagation
+
+```{r}
+#| label: fig-sentiment-platform
+#| fig-cap: "Sentiment distribution by platform"
+#| fig-height: 5
+
+if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
+
+  sent_platform <- corpus_data |>
+    filter(platform %in% platforms_keep, !is.na(AUTO_SENTIMENT)) |>
+    count(platform, AUTO_SENTIMENT) |>
+    group_by(platform) |>
+    mutate(pct = n / sum(n) * 100) |>
+    ungroup()
+
+  ggplot(sent_platform, aes(x = platform, y = pct, fill = AUTO_SENTIMENT)) +
+    geom_col(alpha = 0.85) +
+    scale_fill_manual(values = c(
+      "positive" = "#4daf4a", "Positive" = "#4daf4a",
+      "neutral" = "gray60", "Neutral" = "gray60",
+      "negative" = "#e41a1c", "Negative" = "#e41a1c"
+    )) +
+    labs(
+      title = "Sentiment Distribution by Platform",
+      x = NULL, y = "% of articles", fill = "Sentiment"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+# Pre vs Post ChatGPT Platform Dynamics
+
+```{r}
+#| label: fig-platform-frame-shift
+#| fig-cap: "Frame share shift by platform after ChatGPT"
+#| fig-height: 8
+
+platform_frame_shift <- corpus_data |>
+  filter(platform %in% platforms_keep) |>
+  mutate(period = ifelse(post_chatgpt == 1, "Post", "Pre")) |>
+  group_by(platform, period) |>
+  summarise(
+    n = n(),
+    threat_pct = sum(threat, na.rm = TRUE) / n() * 100,
+    opportunity_pct = sum(opportunity, na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  pivot_longer(cols = c(threat_pct, opportunity_pct),
+               names_to = "index", values_to = "pct") |>
+  mutate(index = ifelse(str_detect(index, "threat"), "Threat", "Opportunity"))
+
+ggplot(platform_frame_shift,
+       aes(x = platform, y = pct, fill = period)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  facet_wrap(~ index) +
+  scale_fill_manual(values = c("Pre" = "gray60", "Post" = "#2c7bb6")) +
+  labs(
+    title = "Framing Shift by Platform After ChatGPT",
+    x = NULL, y = "% of articles", fill = "Period"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## DiD: Platform x ChatGPT Interaction
+
+```{r}
+#| label: tbl-did-platform-threat
+#| tbl-cap: "DiD estimates for threat framing across platforms (web as baseline)"
+
+if (length(platforms_keep) >= 2 && "web" %in% platforms_keep) {
+
+  did_data <- corpus_data |>
+    filter(platform %in% platforms_keep) |>
+    mutate(platform = relevel(factor(platform), ref = "web"))
+
+  did_threat <- feols(
+    threat ~ post_chatgpt * platform | year_month,
+    data = did_data,
+    vcov = "hetero"
+  )
+
+  cat("=== DiD: Threat Frame (platforms vs web baseline) ===\n")
+  summary(did_threat)
+}
+```
+
+# Summary of Findings
+
+```{r}
+#| label: tbl-summary
+#| tbl-cap: "Summary of main results"
+
+n_platforms <- length(platforms_keep)
+dominant_platform <- platform_dist$platform[1]
+dominant_pct <- platform_dist$pct[1]
+
+n_granger_sig <- nrow(granger_sig)
+
+findings <- tibble(
+  Finding = c(
+    "Platforms with sufficient data for analysis",
+    "Dominant platform",
+    "Platforms differ in framing (Chi2 tests)",
+    "Significant Granger causality pairs (p < 0.10)",
+    "Net information sender(s)",
+    "Net information receiver(s)",
+    "Fastest ChatGPT response",
+    "Highest threat/opportunity ratio"
+  ),
+  Result = c(
+    n_platforms,
+    paste0(dominant_platform, " (", dominant_pct, "%)"),
+    paste0(sum(chi2_tbl$Platforms_differ == "Yes"), " of ",
+           nrow(chi2_tbl), " frames"),
+    n_granger_sig,
+    ifelse(exists("net_scores") && nrow(net_scores) > 0,
+           paste(net_scores$platform[net_scores$net_score > 0], collapse = ", "),
+           "N/A"),
+    ifelse(exists("net_scores") && nrow(net_scores) > 0,
+           paste(net_scores$platform[net_scores$net_score < 0], collapse = ", "),
+           "N/A"),
+    ifelse(nrow(peak_tbl) > 0, paste0(peak_tbl$Platform[1],
+           " (week ", peak_tbl$Weeks_to_peak[1], ")"), "N/A"),
+    ifelse(nrow(platform_composite) > 0,
+           paste0(platform_composite$platform[which.max(platform_composite$ratio)],
+                  " (", round(max(platform_composite$ratio), 1), ")"), "N/A")
+  )
+)
+
+kable(findings) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Discussion
+
+This analysis documents three sets of findings about cross platform narrative
+propagation in AI labour coverage.
+
+First, platforms have distinct framing fingerprints. The chi squared tests
+confirm that frame distributions are not platform independent for most frames.
+This means that consumers of different platforms receive systematically
+different information about AI and labour, even within the same national media
+market. From an information economics perspective, this creates a mechanism for
+belief heterogeneity. Workers who primarily consume social media may form
+different expectations about AI risk than those who read web portals, even when
+exposed to comparable volumes of coverage.
+
+Second, the Granger causality analysis reveals the directional structure of
+narrative flows. The net flow scores identify which platforms function as agenda
+setters and which are followers. If web portals Granger cause social media
+platforms but not vice versa, the traditional editorial gatekeeping model still
+holds for this topic. If the reverse holds, it suggests that AI labour
+narratives are generated bottom up from user discussions. The VAR impulse
+response functions and forecast error variance decomposition quantify these
+dynamics more precisely.
+
+Third, the ChatGPT shock propagated unevenly across platforms, with different
+lag structures and intensity multipliers. The cumulative response curves show
+which platforms absorbed the information shock fastest. The DiD estimates test
+whether certain platforms exhibited disproportionate framing shifts relative to
+web portals as baseline.
+
+The main limitation is that volume based Granger causality does not identify
+content level propagation. Two platforms could show Granger causality in volume
+because both respond to a common external signal (actual AI developments) rather
+than because one influences the other. The frame specific Granger tests
+partially address this by testing whether it is the framing composition rather
+than just the volume that propagates.
+
+For economics journals, this analysis speaks to the literature on media markets
+and information provision (Gentzkow, Shapiro, and Sinkinson 2011), news
+diffusion (Cage, Herve, and Viaud 2020), and the supply side of information
+environments that shape economic expectations (Coibion and Gorodnichenko 2015).
+The key insight is that platform structure creates systematic variation in the
+information treatment that different population segments receive about a
+consequential economic topic.
+
+# Technical Appendix
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```
