@@ -33,18 +33,14 @@ renv/sandbox/
 # ============================================================
 # Output artifacts (reproducible from code)
 # ============================================================
-output/reports/*.html
-output/reports/*.pdf
 output/figures/*.png
 output/figures/*.pdf
 output/tables/*.csv
 output/tables/*.tex
 
 # ============================================================
-# Rendered HTML/PDF reports (reproducible from .qmd)
+# Quarto intermediate files
 # ============================================================
-R/*.html
-R/*.pdf
 *.rmarkdown
 
 # ============================================================
