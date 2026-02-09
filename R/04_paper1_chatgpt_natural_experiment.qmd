@@ -121,7 +121,7 @@ cross platform heterogeneity in narrative propagation.
 ```{r}
 #| label: load-corpus
 
-CORPUS_PATH <- "C:/Users/lsikic/Desktop/AI_labour/data/raw/ai_labour_corpus.rds"
+CORPUS_PATH <- "../data/raw/ai_labour_corpus.rds"
 
 if (!file.exists(CORPUS_PATH)) {
   stop("Corpus file not found at: ", CORPUS_PATH,
