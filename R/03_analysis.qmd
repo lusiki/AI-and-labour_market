@@ -1,6 +1,6 @@
 ---
 title: "AI and the Labour Market in Croatian Media"
-subtitle: "Media Framing Analysis (2021--2024)"
+subtitle: "Media Framing Analysis (2021--2023)"
 author: "Luka Sikic"
 date: today
 format:
@@ -67,11 +67,29 @@ frame_colors <- c(
   "FEAR_RESISTANCE" = "#999999",
   "NONE"            = "gray80"
 )
+
+sentiment_colors <- c(
+  "positive" = "#4daf4a", "Positive" = "#4daf4a",
+  "neutral"  = "gray60",  "Neutral"  = "gray60",
+  "negative" = "#e41a1c", "Negative" = "#e41a1c"
+)
+
+platform_colors <- c(
+  "web"       = "#2c7bb6",
+  "Facebook"  = "#3b5998",
+  "Twitter"   = "#1da1f2",
+  "Instagram" = "#e1306c",
+  "YouTube"   = "#ff0000",
+  "TikTok"    = "#000000",
+  "Reddit"    = "#ff4500",
+  "forum"     = "#7f8c8d",
+  "Other"     = "gray60"
+)
 ```
 
 # Abstract {.unnumbered}
 
-This document analyses how Croatian digital media frame the intersection of artificial intelligence and the labour market. The corpus is drawn from the Determ media-monitoring platform (2021--2024) and includes only articles containing both AI-related and labour-market-related keywords (intersection logic). Eight interpretive frames, six actor categories, and automated sentiment are examined across time and media outlet types.
+This document analyses how Croatian digital media frame the intersection of artificial intelligence and the labour market. The corpus is drawn from the Determ media-monitoring platform (January 2021 through December 2023) and includes only articles containing both AI-related and labour-market-related keywords (intersection logic). Eight interpretive frames, six actor categories, and automated sentiment are examined across time, platform, and media outlet types. The analysis provides a comprehensive exploratory and descriptive foundation for subsequent econometric work.
 
 ::: {.callout-note}
 ## Data preparation
@@ -109,6 +127,10 @@ if (!file.exists(path_raw_corpus)) {
 }
 
 corpus_data <- readRDS(path_raw_corpus)
+
+# --- DATE FILTER: keep only articles before 2024-01-01 ---
+corpus_data <- corpus_data |>
+  filter(DATE < as.Date("2024-01-01"))
 
 cat("Corpus loaded successfully\n")
 cat("Total articles:", format(nrow(corpus_data), big.mark = ","), "\n")
@@ -185,6 +207,101 @@ ggplot(top_sources, aes(x = reorder(FROM, n), y = n)) +
   labs(title = "Top 25 sources", x = NULL, y = "Articles")
 ```
 
+## Article length distribution
+
+```{r}
+#| label: fig-word-count-dist
+#| fig-cap: "Distribution of article length (word count)"
+#| fig-height: 5
+
+ggplot(corpus_data |> filter(word_count > 0, word_count < quantile(word_count, 0.99, na.rm = TRUE)),
+       aes(x = word_count)) +
+  geom_histogram(bins = 60, fill = "#2c7bb6", alpha = 0.7, color = "white") +
+  geom_vline(xintercept = median(corpus_data$word_count, na.rm = TRUE),
+             linetype = "dashed", color = "#d7191c") +
+  annotate("label",
+           x = median(corpus_data$word_count, na.rm = TRUE),
+           y = Inf, vjust = 1.5,
+           label = paste("Median:", round(median(corpus_data$word_count, na.rm = TRUE))),
+           fill = "white", size = 3.5) +
+  labs(title = "Article length distribution",
+       subtitle = "Top 1% trimmed. Dashed line marks the median.",
+       x = "Word count", y = "Articles")
+```
+
+```{r}
+#| label: tbl-wordcount-by-source
+#| tbl-cap: "Article length by source type"
+
+if ("SOURCE_TYPE" %in% names(corpus_data)) {
+  wc_by_source <- corpus_data |>
+    filter(!is.na(SOURCE_TYPE)) |>
+    group_by(SOURCE_TYPE) |>
+    summarise(
+      n       = n(),
+      median  = round(median(word_count, na.rm = TRUE)),
+      mean    = round(mean(word_count, na.rm = TRUE)),
+      p25     = round(quantile(word_count, 0.25, na.rm = TRUE)),
+      p75     = round(quantile(word_count, 0.75, na.rm = TRUE)),
+      .groups = "drop"
+    ) |>
+    arrange(desc(median))
+
+  kable(wc_by_source,
+        col.names = c("Source type", "N", "Median", "Mean", "P25", "P75")) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+## Platform landscape
+
+```{r}
+#| label: platform-setup
+
+corpus_data <- corpus_data |>
+  mutate(
+    platform = case_when(
+      tolower(SOURCE_TYPE) %in% c("web", "internet") ~ "web",
+      tolower(SOURCE_TYPE) %in% c("facebook", "fb")  ~ "Facebook",
+      tolower(SOURCE_TYPE) %in% c("twitter", "x")    ~ "Twitter",
+      tolower(SOURCE_TYPE) == "instagram"             ~ "Instagram",
+      tolower(SOURCE_TYPE) == "youtube"               ~ "YouTube",
+      tolower(SOURCE_TYPE) == "tiktok"                ~ "TikTok",
+      tolower(SOURCE_TYPE) == "reddit"                ~ "Reddit",
+      tolower(SOURCE_TYPE) %in% c("forum", "forum.hr") ~ "forum",
+      TRUE ~ "Other"
+    )
+  )
+```
+
+```{r}
+#| label: fig-platform-monthly
+#| fig-cap: "Monthly volume by platform"
+#| fig-height: 8
+
+platforms_with_data <- corpus_data |>
+  count(platform) |>
+  filter(n >= 20) |>
+  pull(platform)
+
+platform_monthly <- corpus_data |>
+  filter(platform %in% platforms_with_data) |>
+  count(year_month, platform) |>
+  filter(!is.na(year_month))
+
+ggplot(platform_monthly, aes(x = year_month, y = n)) +
+  geom_col(aes(fill = platform), alpha = 0.7, show.legend = FALSE) +
+  geom_smooth(method = "loess", se = FALSE, color = "black",
+              linewidth = 0.7, span = 0.3) +
+  facet_wrap(~ platform, ncol = 2, scales = "free_y") +
+  scale_fill_manual(values = platform_colors) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b\n%Y") +
+  labs(title = "Monthly article volume by platform",
+       x = NULL, y = "Articles") +
+  theme(axis.text.x = element_text(size = 8))
+```
+
+
 # Temporal dynamics
 
 ## Monthly volume
@@ -205,6 +322,9 @@ events <- tibble(
   y_pos = max(monthly_volume$n, na.rm = TRUE) * seq(0.95, by = -0.10,
                                                      length.out = length(events_cfg))
 )
+
+# Keep only events within data range
+events <- events |> filter(date <= max(corpus_data$DATE))
 
 ggplot(monthly_volume, aes(x = year_month, y = n)) +
   geom_col(fill = "#2c7bb6", alpha = 0.7) +
@@ -235,6 +355,95 @@ ggplot(yearly_volume, aes(x = factor(year), y = n)) +
   labs(title = "Annual volume", x = "Year", y = "Articles") +
   expand_limits(y = max(yearly_volume$n) * 1.1)
 ```
+
+## Quarterly breakdown
+
+```{r}
+#| label: fig-quarterly-volume
+#| fig-cap: "Quarterly article volume with year-over-year growth"
+#| fig-height: 5
+
+quarterly_volume <- corpus_data |>
+  count(year, quarter) |>
+  filter(!is.na(year)) |>
+  mutate(yq = paste0(year, " Q", quarter)) |>
+  arrange(year, quarter) |>
+  mutate(
+    lag_n = lag(n, 4),
+    yoy_growth = ifelse(!is.na(lag_n) & lag_n > 0,
+                        round((n / lag_n - 1) * 100, 1), NA_real_)
+  )
+
+p_qvol <- ggplot(quarterly_volume, aes(x = fct_inorder(yq), y = n)) +
+  geom_col(fill = "#2c7bb6", alpha = 0.8) +
+  geom_text(aes(label = n), vjust = -0.5, size = 3) +
+  labs(title = "Quarterly volume", x = NULL, y = "Articles") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  expand_limits(y = max(quarterly_volume$n, na.rm = TRUE) * 1.1)
+
+p_qgrowth <- quarterly_volume |>
+  filter(!is.na(yoy_growth)) |>
+  ggplot(aes(x = fct_inorder(yq), y = yoy_growth,
+             fill = yoy_growth > 0)) +
+  geom_col(alpha = 0.8, show.legend = FALSE) +
+  geom_hline(yintercept = 0, color = "gray40") +
+  geom_text(aes(label = paste0(yoy_growth, "%")),
+            vjust = ifelse(quarterly_volume$yoy_growth[!is.na(quarterly_volume$yoy_growth)] > 0, -0.5, 1.5),
+            size = 3) +
+  scale_fill_manual(values = c("TRUE" = "#4daf4a", "FALSE" = "#e41a1c")) +
+  labs(title = "Year-over-year growth rate", x = NULL, y = "% change") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_qvol / p_qgrowth
+```
+
+## Daily volume heatmap
+
+```{r}
+#| label: fig-daily-heatmap
+#| fig-cap: "Daily article volume (calendar heatmap)"
+#| fig-height: 5
+
+daily_volume <- corpus_data |>
+  count(DATE) |>
+  filter(!is.na(DATE)) |>
+  mutate(
+    wday = wday(DATE, label = TRUE, week_start = 1),
+    week = floor_date(DATE, "week", week_start = 1)
+  )
+
+ggplot(daily_volume, aes(x = week, y = wday, fill = n)) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  scale_fill_gradient(low = "#f7fbff", high = "#08306b",
+                      name = "Articles") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y") +
+  labs(title = "Daily article volume",
+       subtitle = "Darker cells indicate higher activity",
+       x = NULL, y = NULL) +
+  theme(axis.text.y = element_text(size = 9))
+```
+
+## Day-of-week patterns
+
+```{r}
+#| label: fig-weekday-pattern
+#| fig-cap: "Average daily articles by day of week"
+#| fig-height: 4
+
+weekday_avg <- corpus_data |>
+  mutate(wday = wday(DATE, label = TRUE, week_start = 1)) |>
+  count(DATE, wday) |>
+  group_by(wday) |>
+  summarise(avg = mean(n), .groups = "drop")
+
+ggplot(weekday_avg, aes(x = wday, y = avg)) +
+  geom_col(fill = "#2c7bb6", alpha = 0.8) +
+  geom_text(aes(label = round(avg, 1)), vjust = -0.5, size = 3.5) +
+  labs(title = "Publication pattern by day of week",
+       x = NULL, y = "Average articles per day") +
+  expand_limits(y = max(weekday_avg$avg) * 1.1)
+```
+
 
 # Frame analysis
 
@@ -331,6 +540,106 @@ ggplot(frame_monthly, aes(x = year_month, y = pct, color = frame)) +
   theme(axis.text.x = element_text(size = 8))
 ```
 
+## Frame co-occurrence
+
+```{r}
+#| label: fig-frame-cooccurrence
+#| fig-cap: "Frame co-occurrence heatmap"
+#| fig-height: 6
+
+# Build frame matrix
+frame_matrix <- as.matrix(corpus_data[, frame_cols])
+colnames(frame_matrix) <- str_remove(colnames(frame_matrix), "frame_")
+
+# Co-occurrence as proportion: of articles with frame A, what share also has frame B
+n_articles <- nrow(frame_matrix)
+n_frames <- ncol(frame_matrix)
+cooc_matrix <- matrix(0, n_frames, n_frames,
+                      dimnames = list(colnames(frame_matrix), colnames(frame_matrix)))
+
+for (i in seq_len(n_frames)) {
+  for (j in seq_len(n_frames)) {
+    if (sum(frame_matrix[, i]) > 0) {
+      cooc_matrix[i, j] <- sum(frame_matrix[, i] & frame_matrix[, j]) /
+                            sum(frame_matrix[, i]) * 100
+    }
+  }
+}
+
+cooc_long <- as.data.frame(as.table(cooc_matrix)) |>
+  setNames(c("Frame_A", "Frame_B", "pct"))
+
+ggplot(cooc_long, aes(x = Frame_B, y = Frame_A, fill = pct)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(pct, 0)), size = 3) +
+  scale_fill_gradient(low = "white", high = "#2c7bb6", name = "% co-occur") +
+  labs(title = "Frame co-occurrence",
+       subtitle = "Of articles containing row frame, what % also contain column frame",
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Frame density per article
+
+```{r}
+#| label: fig-frame-density
+#| fig-cap: "Number of frames detected per article"
+#| fig-height: 4
+
+corpus_data$n_frames <- rowSums(corpus_data[, frame_cols], na.rm = TRUE)
+
+frame_density <- corpus_data |>
+  count(n_frames) |>
+  mutate(pct = round(n / sum(n) * 100, 1))
+
+ggplot(frame_density, aes(x = factor(n_frames), y = n)) +
+  geom_col(fill = "#2c7bb6", alpha = 0.8) +
+  geom_text(aes(label = paste0(pct, "%")), vjust = -0.5, size = 3.5) +
+  labs(title = "Frame density per article",
+       subtitle = "How many distinct frames appear within a single article",
+       x = "Number of frames detected", y = "Articles") +
+  expand_limits(y = max(frame_density$n) * 1.1)
+```
+
+## Composite threat vs opportunity index
+
+```{r}
+#| label: fig-threat-opportunity
+#| fig-cap: "Composite threat vs opportunity frame indices over time"
+#| fig-height: 5
+
+corpus_data$threat <- as.integer(
+  corpus_data$frame_JOB_LOSS | corpus_data$frame_FEAR_RESISTANCE |
+  corpus_data$frame_INEQUALITY
+)
+corpus_data$opportunity <- as.integer(
+  corpus_data$frame_JOB_CREATION | corpus_data$frame_PRODUCTIVITY |
+  corpus_data$frame_TRANSFORMATION
+)
+
+composite_monthly <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n = n(),
+    threat_pct = sum(threat, na.rm = TRUE) / n() * 100,
+    opportunity_pct = sum(opportunity, na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month)) |>
+  pivot_longer(cols = c(threat_pct, opportunity_pct),
+               names_to = "index", values_to = "pct") |>
+  mutate(index = ifelse(str_detect(index, "threat"), "Threat", "Opportunity"))
+
+ggplot(composite_monthly, aes(x = year_month, y = pct, color = index)) +
+  geom_line(linewidth = 0.6, alpha = 0.5) +
+  geom_smooth(method = "loess", span = 0.3, se = TRUE, linewidth = 1.2) +
+  scale_color_manual(values = c("Threat" = "#e41a1c", "Opportunity" = "#4daf4a")) +
+  labs(title = "Threat vs opportunity narrative",
+       subtitle = "Threat = job loss + fear + inequality; Opportunity = creation + productivity + transformation",
+       x = NULL, y = "% of articles", color = NULL)
+```
+
+
 # Actor analysis
 
 ```{r}
@@ -370,6 +679,72 @@ ggplot(actor_counts, aes(x = reorder(actor, count), y = count)) +
   labs(title = "Actor prevalence", x = NULL, y = "Articles") +
   expand_limits(x = max(actor_counts$count) * 1.15)
 ```
+
+## Actor evolution over time
+
+```{r}
+#| label: fig-actor-evolution
+#| fig-cap: "Actor prevalence over time"
+#| fig-height: 7
+
+actor_monthly <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n_total = n(),
+    across(all_of(actor_cols), sum, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  pivot_longer(cols = all_of(actor_cols),
+               names_to = "actor", values_to = "count") |>
+  mutate(
+    actor = str_remove(actor, "actor_"),
+    pct   = count / n_total * 100
+  ) |>
+  filter(!is.na(year_month))
+
+ggplot(actor_monthly, aes(x = year_month, y = pct, color = actor)) +
+  geom_line(linewidth = 0.7, alpha = 0.7) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1, linetype = "dashed") +
+  facet_wrap(~ actor, ncol = 2, scales = "free_y") +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b\n%Y") +
+  labs(title = "Actor prevalence over time",
+       subtitle = "Monthly share with LOESS trend",
+       x = NULL, y = "% of articles", color = NULL) +
+  theme(axis.text.x = element_text(size = 8), legend.position = "none")
+```
+
+## Actor-frame associations
+
+```{r}
+#| label: fig-actor-frame-heatmap
+#| fig-cap: "Actor-frame association heatmap"
+#| fig-height: 5
+
+actor_frame_assoc <- expand.grid(
+  actor = names(actor_dictionaries),
+  frame = names(frame_dictionaries),
+  stringsAsFactors = FALSE
+)
+
+actor_frame_assoc$pct <- mapply(function(a, f) {
+  a_col <- paste0("actor_", a)
+  f_col <- paste0("frame_", f)
+  actor_articles <- corpus_data[[a_col]]
+  n_actor <- sum(actor_articles, na.rm = TRUE)
+  if (n_actor == 0) return(0)
+  sum(actor_articles & corpus_data[[f_col]], na.rm = TRUE) / n_actor * 100
+}, actor_frame_assoc$actor, actor_frame_assoc$frame)
+
+ggplot(actor_frame_assoc, aes(x = frame, y = actor, fill = pct)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(pct, 1)), size = 3) +
+  scale_fill_gradient(low = "white", high = "#2c7bb6", name = "% of actor articles") +
+  labs(title = "Actor-frame associations",
+       subtitle = "Of articles mentioning the actor, what % also contain the frame",
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
 
 # Outlet classification
 
@@ -420,6 +795,166 @@ ggplot(frames_by_outlet, aes(x = frame, y = pct, fill = outlet_type)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+## Outlet volume over time
+
+```{r}
+#| label: fig-outlet-volume-time
+#| fig-cap: "Monthly volume by outlet type"
+#| fig-height: 6
+
+outlet_monthly <- corpus_data |>
+  filter(outlet_type != "Other") |>
+  count(year_month, outlet_type) |>
+  filter(!is.na(year_month))
+
+ggplot(outlet_monthly, aes(x = year_month, y = n, fill = outlet_type)) +
+  geom_area(alpha = 0.7, position = "stack") +
+  scale_fill_brewer(palette = "Set2") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y") +
+  labs(title = "Coverage volume by outlet type",
+       x = NULL, y = "Articles", fill = "Outlet type")
+```
+
+## Threat/opportunity by outlet type
+
+```{r}
+#| label: fig-threat-opp-outlet
+#| fig-cap: "Threat vs opportunity framing by outlet type"
+#| fig-height: 5
+
+outlet_composite <- corpus_data |>
+  filter(outlet_type != "Other") |>
+  group_by(outlet_type) |>
+  summarise(
+    n = n(),
+    threat_pct = sum(threat, na.rm = TRUE) / n() * 100,
+    opportunity_pct = sum(opportunity, na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  mutate(ratio = round(threat_pct / pmax(opportunity_pct, 0.1), 2)) |>
+  pivot_longer(cols = c(threat_pct, opportunity_pct),
+               names_to = "index", values_to = "pct") |>
+  mutate(index = ifelse(str_detect(index, "threat"), "Threat", "Opportunity"))
+
+ggplot(outlet_composite, aes(x = outlet_type, y = pct, fill = index)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  scale_fill_manual(values = c("Threat" = "#e41a1c", "Opportunity" = "#4daf4a")) +
+  labs(title = "Threat vs opportunity by outlet type",
+       x = NULL, y = "% of articles", fill = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+# Engagement analysis
+
+```{r}
+#| label: fig-engagement-overview
+#| fig-cap: "Distribution of article reach and interactions"
+#| fig-height: 5
+
+if (all(c("REACH", "INTERACTIONS") %in% names(corpus_data))) {
+
+  p_reach <- corpus_data |>
+    filter(!is.na(REACH), REACH > 0,
+           REACH < quantile(REACH, 0.99, na.rm = TRUE)) |>
+    ggplot(aes(x = REACH)) +
+    geom_histogram(bins = 50, fill = "#2c7bb6", alpha = 0.7, color = "white") +
+    scale_x_log10(labels = scales::comma) +
+    labs(title = "Article reach (log scale)", x = "Reach", y = "Articles")
+
+  p_interactions <- corpus_data |>
+    filter(!is.na(INTERACTIONS), INTERACTIONS > 0,
+           INTERACTIONS < quantile(INTERACTIONS, 0.99, na.rm = TRUE)) |>
+    ggplot(aes(x = INTERACTIONS)) +
+    geom_histogram(bins = 50, fill = "#e41a1c", alpha = 0.7, color = "white") +
+    scale_x_log10(labels = scales::comma) +
+    labs(title = "Article interactions (log scale)", x = "Interactions", y = "Articles")
+
+  p_reach | p_interactions
+}
+```
+
+```{r}
+#| label: tbl-engagement-by-frame
+#| tbl-cap: "Median reach and interactions by dominant frame"
+
+if (all(c("REACH", "INTERACTIONS") %in% names(corpus_data))) {
+
+  engagement_by_frame <- lapply(names(frame_dictionaries), function(fname) {
+    f_col <- paste0("frame_", fname)
+    articles_with <- corpus_data |> filter(.data[[f_col]] == TRUE)
+
+    tibble(
+      Frame = fname,
+      N = nrow(articles_with),
+      Median_reach = round(median(articles_with$REACH, na.rm = TRUE)),
+      Median_interactions = round(median(articles_with$INTERACTIONS, na.rm = TRUE)),
+      Mean_reach = round(mean(articles_with$REACH, na.rm = TRUE)),
+      Mean_interactions = round(mean(articles_with$INTERACTIONS, na.rm = TRUE))
+    )
+  })
+
+  engagement_tbl <- bind_rows(engagement_by_frame) |> arrange(desc(Median_reach))
+
+  kable(engagement_tbl,
+        col.names = c("Frame", "N", "Median Reach", "Median Interactions",
+                       "Mean Reach", "Mean Interactions")) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+```{r}
+#| label: tbl-engagement-by-platform
+#| tbl-cap: "Engagement metrics by platform"
+
+if (all(c("REACH", "INTERACTIONS") %in% names(corpus_data))) {
+
+  engagement_platform <- corpus_data |>
+    filter(platform %in% platforms_with_data) |>
+    group_by(platform) |>
+    summarise(
+      n = n(),
+      median_reach = round(median(REACH, na.rm = TRUE)),
+      median_interactions = round(median(INTERACTIONS, na.rm = TRUE)),
+      total_reach = round(sum(REACH, na.rm = TRUE)),
+      total_interactions = round(sum(INTERACTIONS, na.rm = TRUE)),
+      .groups = "drop"
+    ) |>
+    arrange(desc(median_reach))
+
+  kable(engagement_platform,
+        col.names = c("Platform", "N", "Median Reach", "Median Interactions",
+                       "Total Reach", "Total Interactions")) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+## Top articles by reach
+
+```{r}
+#| label: tbl-top-reach
+#| tbl-cap: "Top 20 articles by estimated reach"
+
+if ("REACH" %in% names(corpus_data)) {
+  top_reach <- corpus_data |>
+    filter(!is.na(REACH)) |>
+    arrange(desc(REACH)) |>
+    head(20) |>
+    dplyr::select(DATE, TITLE, FROM, REACH, INTERACTIONS) |>
+    mutate(
+      TITLE = substr(TITLE, 1, 80),
+      REACH = format(REACH, big.mark = ","),
+      INTERACTIONS = format(INTERACTIONS, big.mark = ",")
+    )
+
+  kable(top_reach, col.names = c("Date", "Title", "Source", "Reach", "Interactions")) |>
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE, font_size = 11) |>
+    scroll_box(height = "400px")
+}
+```
+
+
 # Sentiment analysis
 
 ```{r}
@@ -452,17 +987,231 @@ if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
 
   ggplot(sentiment_monthly, aes(x = year_month, y = pct, fill = AUTO_SENTIMENT)) +
     geom_area(alpha = 0.7) +
-    scale_fill_manual(values = c(
-      "positive" = "#4daf4a", "Positive" = "#4daf4a",
-      "neutral"  = "gray60",  "Neutral"  = "gray60",
-      "negative" = "#e41a1c", "Negative" = "#e41a1c"
-    )) +
+    scale_fill_manual(values = sentiment_colors) +
     scale_y_continuous(labels = scales::percent) +
     scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y") +
     labs(title = "Sentiment over time",
          x = NULL, y = "Share", fill = "Sentiment")
 }
 ```
+
+## Sentiment by frame
+
+```{r}
+#| label: fig-sentiment-by-frame
+#| fig-cap: "Sentiment composition by frame"
+#| fig-height: 6
+
+if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
+
+  sentiment_frame <- lapply(names(frame_dictionaries), function(fname) {
+    f_col <- paste0("frame_", fname)
+    corpus_data |>
+      filter(.data[[f_col]] == TRUE, !is.na(AUTO_SENTIMENT)) |>
+      count(AUTO_SENTIMENT) |>
+      mutate(
+        frame = fname,
+        pct = n / sum(n) * 100
+      )
+  })
+
+  sentiment_frame_df <- bind_rows(sentiment_frame)
+
+  ggplot(sentiment_frame_df,
+         aes(x = frame, y = pct, fill = AUTO_SENTIMENT)) +
+    geom_col(alpha = 0.85) +
+    scale_fill_manual(values = sentiment_colors) +
+    labs(title = "Sentiment composition by frame",
+         subtitle = "Some frames carry systematically more negative sentiment",
+         x = NULL, y = "% of articles", fill = "Sentiment") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+## Sentiment by outlet type
+
+```{r}
+#| label: fig-sentiment-outlet
+#| fig-cap: "Sentiment distribution by outlet type"
+#| fig-height: 5
+
+if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
+
+  sentiment_outlet <- corpus_data |>
+    filter(!is.na(AUTO_SENTIMENT), outlet_type != "Other") |>
+    count(outlet_type, AUTO_SENTIMENT) |>
+    group_by(outlet_type) |>
+    mutate(pct = n / sum(n) * 100) |>
+    ungroup()
+
+  ggplot(sentiment_outlet, aes(x = outlet_type, y = pct, fill = AUTO_SENTIMENT)) +
+    geom_col(alpha = 0.85) +
+    scale_fill_manual(values = sentiment_colors) +
+    labs(title = "Sentiment by outlet type",
+         x = NULL, y = "% of articles", fill = "Sentiment") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+
+# Keyword analysis
+
+## Most frequent AI terms
+
+```{r}
+#| label: tbl-ai-term-frequency
+#| tbl-cap: "Frequency of individual AI keyword matches"
+
+ai_keywords <- list(
+  "umjetna inteligencija" = "umjetn.*inteligencij",
+  "strojno učenje"        = "strojn.*učenj",
+  "ChatGPT"               = "chat.?gpt",
+  "GPT-4/GPT-3"           = "gpt.?[34]",
+  "OpenAI"                = "openai|open ai",
+  "generativni AI"        = "generativn.*(ai|umjetn)",
+  "automatizacija"        = "automatizacij",
+  "robotizacija"          = "robotizacij",
+  "algoritam"             = "algoritm",
+  "neuronska mreža"       = "neuronsk|neuralna",
+  "chatbot"               = "chatbot",
+  "LLM"                   = "\\bllm\\b",
+  "Gemini"                = "\\bgemini\\b",
+  "Copilot"               = "copilot",
+  "duboko učenje"         = "duboko.*učenj"
+)
+
+ai_freq <- sapply(ai_keywords, function(pat) {
+  sum(stri_detect_regex(corpus_data$.text_lower, pat), na.rm = TRUE)
+})
+
+ai_freq_tbl <- tibble(
+  Term = names(ai_freq),
+  Articles = unname(ai_freq),
+  Pct = round(ai_freq / nrow(corpus_data) * 100, 1)
+) |> arrange(desc(Articles))
+
+kable(ai_freq_tbl, col.names = c("AI Term", "Articles", "% corpus")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Most frequent labour terms
+
+```{r}
+#| label: tbl-labour-term-frequency
+#| tbl-cap: "Frequency of individual labour market keyword matches"
+
+labour_keywords <- list(
+  "posao/poslovi"           = "\\bposao|\\bposlovi|\\bposlove|\\bposlova",
+  "zaposleni/zapošljavanje" = "zaposlen|zapošljav",
+  "nezaposlenost"           = "nezaposlen",
+  "radno mjesto"            = "radn.*mjest",
+  "tržište rada"            = "tržišt.*rada",
+  "vještine"                = "vještin",
+  "kompetencije"            = "kompetencij",
+  "karijera"                = "karijer",
+  "produktivnost"           = "produktivnost",
+  "otpuštanje"              = "otpuštan",
+  "prekvalifikacija"        = "prekvalifikacij|dokvalifikacij",
+  "plaća"                   = "\\bplaća|\\bplaće|\\bplaću",
+  "poslodavac"              = "poslodav",
+  "radna snaga"             = "radn.*snag",
+  "zanimanje"               = "zaniman"
+)
+
+labour_freq <- sapply(labour_keywords, function(pat) {
+  sum(stri_detect_regex(corpus_data$.text_lower, pat), na.rm = TRUE)
+})
+
+labour_freq_tbl <- tibble(
+  Term = names(labour_freq),
+  Articles = unname(labour_freq),
+  Pct = round(labour_freq / nrow(corpus_data) * 100, 1)
+) |> arrange(desc(Articles))
+
+kable(labour_freq_tbl, col.names = c("Labour Term", "Articles", "% corpus")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## AI term evolution
+
+```{r}
+#| label: fig-ai-term-evolution
+#| fig-cap: "Selected AI term mention rates over time"
+#| fig-height: 6
+
+key_ai_terms <- list(
+  "ChatGPT"      = "chat.?gpt",
+  "AI/UI"        = "umjetn.*inteligencij",
+  "automatizacija" = "automatizacij",
+  "algoritam"    = "algoritm",
+  "robotizacija" = "robotizacij"
+)
+
+ai_term_monthly <- lapply(names(key_ai_terms), function(term_name) {
+  corpus_data |>
+    group_by(year_month) |>
+    summarise(
+      pct = sum(stri_detect_regex(.text_lower, key_ai_terms[[term_name]]),
+                na.rm = TRUE) / n() * 100,
+      .groups = "drop"
+    ) |>
+    filter(!is.na(year_month)) |>
+    mutate(term = term_name)
+})
+
+ai_term_monthly_df <- bind_rows(ai_term_monthly)
+
+ggplot(ai_term_monthly_df, aes(x = year_month, y = pct, color = term)) +
+  geom_line(linewidth = 0.7) +
+  labs(title = "AI term prevalence over time",
+       subtitle = "Share of articles mentioning each term",
+       x = NULL, y = "% of articles", color = "Term") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b\n%Y")
+```
+
+
+# Frame dynamics by platform
+
+```{r}
+#| label: fig-frames-by-platform
+#| fig-cap: "Frame prevalence by platform"
+#| fig-height: 6
+
+platform_frames <- corpus_data |>
+  filter(platform %in% platforms_with_data) |>
+  group_by(platform) |>
+  summarise(
+    n = n(),
+    across(all_of(frame_cols), ~ sum(.x, na.rm = TRUE) / n() * 100),
+    .groups = "drop"
+  ) |>
+  pivot_longer(cols = all_of(frame_cols),
+               names_to = "frame", values_to = "pct") |>
+  mutate(frame = str_remove(frame, "frame_"))
+
+ggplot(platform_frames, aes(x = frame, y = pct, fill = platform)) +
+  geom_col(position = "dodge", alpha = 0.85) +
+  scale_fill_manual(values = platform_colors) +
+  labs(title = "Frame prevalence by platform",
+       x = NULL, y = "% of articles", fill = "Platform") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| label: fig-platform-frame-heatmap
+#| fig-cap: "Platform x frame heatmap"
+#| fig-height: 5
+
+ggplot(platform_frames, aes(x = frame, y = platform, fill = pct)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(pct, 1)), size = 3) +
+  scale_fill_gradient2(low = "white", mid = "#abd9e9", high = "#2c7bb6",
+                       midpoint = median(platform_frames$pct)) +
+  labs(title = "Platform x frame heatmap",
+       x = NULL, y = NULL, fill = "% of articles") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
 
 # Sample articles
 
@@ -472,7 +1221,7 @@ if ("AUTO_SENTIMENT" %in% names(corpus_data)) {
 set.seed(CONFIG$analysis$seed)
 sample_articles <- corpus_data |>
   slice_sample(n = min(30, nrow(corpus_data))) |>
-  select(DATE, TITLE, FROM) |>
+  dplyr::select(DATE, TITLE, FROM) |>
   arrange(DATE)
 
 kable(sample_articles, col.names = c("Date", "Title", "Source")) |>
@@ -492,13 +1241,74 @@ n_sources     <- n_distinct(corpus_data$FROM)
 top_frame     <- frame_counts$frame[1]
 top_frame_pct <- frame_counts$pct[1]
 
+# Frame summary
 cat("ANALYSIS SUMMARY\n")
 cat("================\n\n")
 cat("Total articles:", format(n_articles, big.mark = ","), "\n")
 cat("Period:", date_range, "\n")
 cat("Sources:", format(n_sources, big.mark = ","), "\n")
-cat("Dominant frame:", top_frame, "(", top_frame_pct, "% of articles)\n")
+cat("Dominant frame:", top_frame, "(", top_frame_pct, "% of articles)\n\n")
+
+# Frame density
+cat("Frame density:\n")
+cat("  Articles with 0 frames:", sum(corpus_data$n_frames == 0), "\n")
+cat("  Articles with 1 frame:", sum(corpus_data$n_frames == 1), "\n")
+cat("  Articles with 2+ frames:", sum(corpus_data$n_frames >= 2), "\n\n")
+
+# Threat vs opportunity
+cat("Composite indices:\n")
+cat("  Articles with threat framing:", sum(corpus_data$threat, na.rm = TRUE),
+    "(", round(mean(corpus_data$threat, na.rm = TRUE) * 100, 1), "%)\n")
+cat("  Articles with opportunity framing:", sum(corpus_data$opportunity, na.rm = TRUE),
+    "(", round(mean(corpus_data$opportunity, na.rm = TRUE) * 100, 1), "%)\n")
 ```
+
+```{r}
+#| label: tbl-summary-table
+#| tbl-cap: "Comprehensive corpus statistics"
+
+summary_comprehensive <- tibble(
+  Category = c(
+    rep("Corpus", 5),
+    rep("Frames", 4),
+    rep("Actors", 2),
+    rep("Platforms", 2)
+  ),
+  Metric = c(
+    "Total articles", "Unique sources", "Date range",
+    "Median article length (words)", "Mean article length (words)",
+    "Dominant frame", "Articles with any frame",
+    "Mean frames per article", "Threat/opportunity ratio",
+    "Most mentioned actor", "Least mentioned actor",
+    "Dominant platform", "Number of platforms"
+  ),
+  Value = c(
+    format(nrow(corpus_data), big.mark = ","),
+    format(n_distinct(corpus_data$FROM), big.mark = ","),
+    paste(min(corpus_data$DATE), "to", max(corpus_data$DATE)),
+    round(median(corpus_data$word_count, na.rm = TRUE)),
+    round(mean(corpus_data$word_count, na.rm = TRUE)),
+    paste0(frame_counts$frame[1], " (", frame_counts$pct[1], "%)"),
+    paste0(sum(corpus_data$n_frames > 0), " (",
+           round(mean(corpus_data$n_frames > 0) * 100, 1), "%)"),
+    round(mean(corpus_data$n_frames), 2),
+    round(sum(corpus_data$threat, na.rm = TRUE) /
+          max(sum(corpus_data$opportunity, na.rm = TRUE), 1), 2),
+    paste0(actor_counts$actor[1], " (", actor_counts$pct[1], "%)"),
+    paste0(actor_counts$actor[nrow(actor_counts)], " (",
+           actor_counts$pct[nrow(actor_counts)], "%)"),
+    paste0(source_dist$SOURCE_TYPE[1], " (", source_dist$pct[1], "%)"),
+    length(platforms_with_data)
+  )
+)
+
+kable(summary_comprehensive, col.names = c("Category", "Metric", "Value")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  pack_rows(index = table(summary_comprehensive$Category)[
+    unique(summary_comprehensive$Category)
+  ])
+```
+
 
 # Data export
 
@@ -506,7 +1316,7 @@ cat("Dominant frame:", top_frame, "(", top_frame_pct, "% of articles)\n")
 #| label: export
 #| eval: false
 
-export_data <- corpus_data |> select(-`.text_lower`)
+export_data <- corpus_data |> dplyr::select(-`.text_lower`)
 saveRDS(export_data, path_analysed_corpus)
 ```
 
