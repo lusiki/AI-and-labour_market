@@ -1,7 +1,19 @@
 ---
 title: "The ChatGPT Shock and Public Information about AI and Work"
 subtitle: "Event-Study Evidence from Croatian Digital Media (2021–2024)"
-author: "Media Analysis Research"
+author:
+  - name: Petra Palić
+    affiliations:
+      - name: Croatian Catholic University
+        department: University Department of Sociology
+  - name: Luka Šikić
+    affiliations:
+      - name: Croatian Catholic University
+        department: University Department of Communication Studies
+  - name: Antea Barišić
+    affiliations:
+      - name: University of Zagreb
+        department: Faculty of Economics and Business
 date: today
 bibliography: ../references.bib
 format:
@@ -81,115 +93,309 @@ bw_two   <- c("black", "gray55")
 bw_three <- c("black", "gray45", "gray70")
 ```
 
+```{r}
+#| label: compute-key-numbers
+#| include: false
+
+# Headline numbers used inline in the abstract, introduction, and discussion.
+# Recomputes a subset of the regressions reported in the tables further down
+# so the prose magnitudes update with the data. Cross-check on render against
+# tbl-poisson, tbl-ate-frames, tbl-asymmetry-test, and tbl-did-outlet.
+
+CORPUS_PATH <- "../data/raw/ai_labour_corpus.rds"
+if (!file.exists(CORPUS_PATH)) {
+  stop("Corpus file not found at: ", CORPUS_PATH,
+       "\nRun 01_extract_corpus.R first.")
+}
+corpus_data <- readRDS(CORPUS_PATH) |>
+  mutate(
+    DATE = as.Date(DATE),
+    .text_lower = stri_trans_tolower(
+      paste(coalesce(TITLE, ""), coalesce(FULL_TEXT, ""), sep = " ")
+    ),
+    year         = year(DATE),
+    month        = month(DATE),
+    year_month   = floor_date(DATE, "month"),
+    year_week    = floor_date(DATE, "week"),
+    quarter      = quarter(DATE),
+    year_quarter = paste0(year, " Q", quarter),
+    word_count   = stri_count_regex(FULL_TEXT, "\\S+")
+  ) |>
+  filter(!is.na(DATE), DATE < as.Date("2024-01-01")) |>
+  distinct(TITLE, DATE, FROM, .keep_all = TRUE) |>
+  arrange(DATE)
+
+# Frame dictionaries — duplicated from the Frame Detection section so this
+# chunk is self-contained and runs before the Introduction.
+.frame_dicts <- list(
+  JOB_LOSS = c("gubitak posla","gubitak poslova","gubitak radnih mjesta",
+               "ukidanje radnih mjesta","ukidanje poslova",
+               "zamjena radnika","zamijeniti radnike","zamjenjuje radnike",
+               "istisnuti radnike","istiskivanje","otpuštanje","otpuštanja",
+               "nestanak poslova","nestanak zanimanja","suvišan",
+               "suvišni radnici","tehnološka nezaposlenost","krade poslove",
+               "krade posao","oduzima posao","prijeti radnim mjestima",
+               "ugrožava radna mjesta"),
+  JOB_CREATION = c("nova radna mjesta","novi poslovi","novo zapošljavanje",
+                   "nove prilike","nove mogućnosti","stvaranje poslova",
+                   "rast zapošljavanja","povećanje zapošljavanja",
+                   "nova zanimanja","nova karijera",
+                   "potražnja za stručnjacima","nedostatak radnika",
+                   "deficitarna zanimanja"),
+  TRANSFORMATION = c("transformacija rada","transformacija poslova",
+                     "promjena načina rada","mijenja način rada",
+                     "prilagodba","prilagoditi se","prilagođavanje",
+                     "nadopunjuje","komplementar","suradnja čovjeka i",
+                     "čovjek i stroj","evolucija poslova","evolucija rada",
+                     "nove uloge","promijenjena uloga","ne zamjenjuje nego"),
+  PRODUCTIVITY = c("produktivnost","povećanje produktivnosti",
+                   "učinkovitost","efikasnost","ušteda","smanjenje troškova",
+                   "konkurentnost","konkurentna prednost","gospodarski rast",
+                   "ekonomski rast","optimizacija"),
+  INEQUALITY = c("nejednakost","rastuća nejednakost","digitalni jaz",
+                 "tehnološki jaz","socijalna nejednakost","polarizacija",
+                 "jaz u plaćama","ranjive skupine","marginalizirani",
+                 "srednja klasa","nestanak srednje klase"),
+  FEAR_RESISTANCE = c("strah od ai","strah od gubitka","strah od tehnologij",
+                      "prijetnja","opasnost","apokalipsa","distopija",
+                      "katastrofa","upozorenje","alarm","otpor prema",
+                      "protivljenje","neizvjesnost","nesigurnost","panika",
+                      "zabrinutost")
+)
+for (fname in names(.frame_dicts)) {
+  pat <- paste(.frame_dicts[[fname]], collapse = "|")
+  corpus_data[[paste0("frame_", fname)]] <- stri_detect_regex(
+    corpus_data$.text_lower, pat
+  )
+}
+
+# Outlet classification (subset needed for the DiD)
+.outlet_pat <- tibble::tribble(
+  ~pattern,    ~outlet_type,
+  "24sata",    "Tabloid",
+  "index",     "Tabloid",
+  "net\\.hr",  "Tabloid",
+  "jutarnji",  "Quality",
+  "vecernji",  "Quality",
+  "dnevnik",   "Quality",
+  "n1",        "Quality",
+  "tportal",   "Quality",
+  "telegram",  "Quality"
+)
+corpus_data$outlet_type <- NA_character_
+.from_lower <- stri_trans_tolower(corpus_data$FROM)
+for (i in seq_len(nrow(.outlet_pat))) {
+  hit <- stri_detect_regex(.from_lower, .outlet_pat$pattern[i])
+  corpus_data$outlet_type[hit & is.na(corpus_data$outlet_type)] <-
+    .outlet_pat$outlet_type[i]
+}
+
+CHATGPT_DATE <- as.Date("2022-12-01")
+corpus_data$post_chatgpt <- as.integer(corpus_data$DATE >= CHATGPT_DATE)
+
+# Monthly volume
+monthly <- corpus_data |>
+  count(year_month) |>
+  filter(!is.na(year_month)) |>
+  mutate(
+    post = as.integer(year_month >= CHATGPT_DATE),
+    t    = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+  )
+
+# Composite threat / opportunity / gap series
+composite_monthly <- corpus_data |>
+  group_by(year_month) |>
+  summarise(
+    n           = n(),
+    threat      = sum(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY,
+                      na.rm = TRUE) / n() * 100,
+    opportunity = sum(frame_JOB_CREATION | frame_PRODUCTIVITY | frame_TRANSFORMATION,
+                      na.rm = TRUE) / n() * 100,
+    .groups = "drop"
+  ) |>
+  filter(!is.na(year_month)) |>
+  mutate(
+    gap  = threat - opportunity,
+    post = as.integer(year_month >= CHATGPT_DATE),
+    t    = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+  )
+
+# Headline regressions
+.qp        <- glm(n ~ post + t, data = monthly, family = quasipoisson())
+.IRR       <- exp(coef(.qp)["post"])
+.IRR_se_log <- summary(.qp)$coefficients["post", "Std. Error"]
+
+.fit_threat <- lm(threat      ~ post + t, data = composite_monthly)
+.fit_opp    <- lm(opportunity ~ post + t, data = composite_monthly)
+.fit_gap    <- lm(gap         ~ post + t, data = composite_monthly)
+.ct_threat <- coeftest(.fit_threat, vcov = vcovHAC(.fit_threat))
+.ct_opp    <- coeftest(.fit_opp,    vcov = vcovHAC(.fit_opp))
+.ct_gap    <- coeftest(.fit_gap,    vcov = vcovHAC(.fit_gap))
+
+.did_data <- corpus_data |>
+  filter(outlet_type %in% c("Tabloid", "Quality")) |>
+  mutate(
+    threat  = as.integer(frame_JOB_LOSS | frame_FEAR_RESISTANCE | frame_INEQUALITY),
+    tabloid = as.integer(outlet_type == "Tabloid")
+  )
+.did_fit <- feols(threat ~ post_chatgpt * tabloid | year_month,
+                  data = .did_data, vcov = "hetero")
+.did_int <- coeftable(.did_fit)["post_chatgpt:tabloid", ]
+
+.pre_mean  <- mean(monthly$n[monthly$post == 0])
+.post_mean <- mean(monthly$n[monthly$post == 1])
+
+# Largest event-study coefficient on threat-leaning frames (post months only)
+.threat_es_max <- function(ycol) {
+  d <- corpus_data |>
+    group_by(year_month) |>
+    summarise(y = sum(.data[[ycol]], na.rm = TRUE) / n() * 100,
+              .groups = "drop") |>
+    filter(!is.na(year_month)) |>
+    mutate(
+      rel_month = interval(CHATGPT_DATE, year_month) %/% months(1),
+      t = as.numeric(difftime(year_month, min(year_month), units = "days")) / 30
+    ) |>
+    filter(rel_month >= -20 & rel_month <= 17)
+  d$rel_fct <- relevel(factor(d$rel_month), ref = "-1")
+  m <- lm(y ~ rel_fct + t, data = d)
+  cf <- broom::tidy(m) |>
+    filter(stringr::str_detect(term, "rel_fct")) |>
+    mutate(k = as.integer(stringr::str_extract(term, "-?\\d+"))) |>
+    filter(k >= 0)
+  if (nrow(cf) == 0) NA_real_ else max(cf$estimate, na.rm = TRUE)
+}
+.max_threat_coef <- max(c(
+  .threat_es_max("frame_JOB_LOSS"),
+  .threat_es_max("frame_FEAR_RESISTANCE"),
+  .threat_es_max("frame_INEQUALITY")
+), na.rm = TRUE)
+
+# Pack
+fmt1 <- function(x) formatC(x, format = "f", digits = 1)
+fmt2 <- function(x) formatC(x, format = "f", digits = 2)
+fmtN <- function(x) format(round(x), big.mark = ",")
+kn <- list(
+  N               = fmtN(nrow(corpus_data)),
+  IRR             = fmt1(.IRR),
+  IRR_se          = fmt2(.IRR_se_log),
+  pre_mean        = fmt1(.pre_mean),
+  post_mean       = fmt1(.post_mean),
+  ratio           = fmt1(.post_mean / .pre_mean),
+  ate_threat      = fmt1(.ct_threat["post", 1]),
+  ate_opp         = fmt1(.ct_opp["post", 1]),
+  gap_pp          = fmt1(.ct_gap["post", 1]),
+  gap_se          = fmt1(.ct_gap["post", 2]),
+  did_coef        = fmt2(.did_int[1]),
+  did_p           = format.pval(.did_int[4], digits = 2),
+  max_threat_coef = fmt1(.max_threat_coef)
+)
+stopifnot(all(nzchar(unlist(kn))))
+```
+
+# Abstract
+
+ChatGPT's November 30, 2022 release made generative artificial intelligence
+visible to a mass audience overnight. We treat the launch as an unanticipated
+shock and estimate its effect on Croatian digital media coverage of AI and
+labour using an event-study design with monthly data from January 2021 to
+December 2023, applied to a corpus of `r kn$N` Croatian-language articles
+drawn from approximately 20 million records on the Determ media-monitoring
+platform. Monthly article volume jumps by a factor of `r kn$IRR`
+(quasi-Poisson, log-scale SE `r kn$IRR_se`); a Sup-F test endogenously locates
+the break at December 2022 (p < 0.01), and a December 2021 placebo coefficient
+is statistically indistinguishable from zero. Threat framing (job loss, fear,
+inequality) rises `r kn$gap_pp` percentage points more than opportunity
+framing (job creation, productivity, transformation), and the gap persists
+through end-2023. Tabloid outlets activate threat narratives more strongly
+than quality outlets in a year-month-fixed-effects difference-in-differences.
+The Croatian information environment delivers risk signals more readily than
+adjustment signals.
+
 # Introduction
 
-A central question in the economics of automation is whether new technologies
-displace, complement, or transform human work [@acemoglu2018race; @autor2015why;
-@bessen2020automation]. The release of ChatGPT on November 30, 2022 sharpened
-this question by making generative artificial intelligence (AI) visible to a
-mass audience essentially overnight. Recent task-level evidence suggests that
-large language models are exposed to a wide and disproportionately white-collar
-share of the occupational distribution [@eloundou2023gpts; @felten2021ai] and
-that, in deployed settings, generative AI raises productivity for some workers
-while compressing observed skill premia [@brynjolfsson2023generative]. Whether
-these capabilities ultimately produce displacement, reallocation, or
-augmentation of labour remains an open empirical question, and will likely
-remain so for years to come.
+Croatian-language digital coverage of AI and work rose by a factor of
+`r kn$IRR` in the year and a half after ChatGPT's release, and its tone
+shifted: threat-related framing about job loss, fear, and inequality outpaced
+opportunity-related framing about job creation, productivity, and
+transformation by `r kn$gap_pp` percentage points, a gap that has not closed.
+Whether generative AI ultimately displaces, complements, or transforms human
+work remains an open empirical question [@acemoglu2018race; @autor2015why;
+@bessen2020automation], and is likely to remain so for years. Workers, firms,
+and policymakers must nonetheless act under uncertainty, and the public
+information environment that shapes those actions has moved measurably.
 
-Workers, firms, and policymakers must nonetheless form beliefs and take decisions
-about reskilling, hiring, occupational choice, and regulation under substantial
-uncertainty about AI capabilities and their economic consequences. In small open
-economies such as Croatia, where systematic firm-level data on AI adoption is
-sparse, the main channel through which workers and policymakers learn about
-AI's labour-market implications is mediated coverage in digital news and social
-media. Knowing what signals that channel transmits, and how they shift in
-response to major capability announcements, is thus a prerequisite for
-understanding how beliefs form and how adjustment unfolds.
+Recent task-level evidence suggests large language models are exposed to a
+wide and disproportionately white-collar share of the occupational
+distribution [@eloundou2023gpts; @felten2021ai], and field experiments find
+generative AI raises productivity for some workers while compressing observed
+skill premia [@brynjolfsson2023generative]. In small open economies such as
+Croatia, where firm-level data on AI adoption is sparse, the main channel
+through which workers and policymakers learn about these capabilities is
+mediated digital coverage. What that channel transmits — which frames, how
+quickly, with what persistence — is therefore a first-order input to belief
+formation and labour-market adjustment.
 
-This paper exploits the ChatGPT launch as a natural experiment on the public
-information environment about AI and work. We treat November 30, 2022 as an
-exogenous shock to the salience of generative-AI capabilities and estimate its
-effect on Croatian digital media coverage of the AI-labour intersection. As in
-standard event-study designs, the identifying assumption is that Croatian media
-did not anticipate the ChatGPT release, so a sharp break in coverage at that
-date reflects the shock rather than a pre-existing trend. We support this
-assumption with formal structural-break tests and a placebo exercise at
-December 2021.
+This paper estimates the effect of the November 30, 2022 ChatGPT release on
+Croatian digital media coverage of AI and labour. We treat the release as an
+unanticipated shock to the salience of generative-AI capabilities and identify
+its effect using an event-study design with monthly observations from January
+2021 to December 2023, complemented by an interrupted time series for
+aggregate volume and a Sup-F test that searches for the break date
+endogenously rather than imposing it. The corpus comprises `r kn$N`
+Croatian-language articles and posts drawn from approximately 20 million
+records on the Determ media-monitoring platform, filtered through a two-stage
+AI ∩ labour intersection requirement. Croatia is a useful case: a small open
+European economy (population approximately 3.85 million, EU member since 2013,
+euro-area member since 2023) with a services-heavy labour market in which
+direct microdata on firm-level AI adoption is essentially unavailable, so the
+information signals reaching workers come almost entirely through mediated
+coverage.
 
-We use a corpus of Croatian-language articles and posts from 2021 to 2024
-extracted from the Determ media-monitoring platform (approximately 20 million
-underlying records across web portals and seven social platforms). Within this
-corpus we measure the prevalence of eight interpretive frames covering the
-main channels through which the literature links AI to labour-market outcomes,
-including job displacement, job creation, task transformation, skills and
-reskilling, regulation, productivity, inequality, and fear or resistance. We
-address four empirical questions: how large is the ChatGPT shock on aggregate
-media attention; which frames activate and how quickly; whether the effect
-differs across platforms and outlet types; and whether post-shock framing shifts
-persist or fade over time.
+Three findings stand out. First, monthly article volume rises by a factor of
+`r kn$IRR` at the launch (quasi-Poisson, log-scale SE `r kn$IRR_se`), pre-launch
+counts averaging `r kn$pre_mean` items per month against `r kn$post_mean`
+post-launch. The Sup-F test rejects no-break (p < 0.01) and the endogenous
+breakpoint coincides with December 2022, while the December 2021 placebo
+coefficient is statistically indistinguishable from zero. Second, threat
+framing rises `r kn$ate_threat` percentage points post-launch against
+`r kn$ate_opp` percentage points for opportunity framing; the
+threat–opportunity gap widens by `r kn$gap_pp` pp (HAC SE `r kn$gap_se`) and
+shows no monthly decay through end-2023.
 
-The paper makes three contributions. First, it provides event-study evidence
-on how a generative-AI capability shock reshapes public information about
-labour-market consequences in a small open European economy where direct
-measurement of AI exposure or adoption is currently infeasible and where worker
-expectations and policy responses are still forming. Second, threat-related
-frames (job loss, fear, inequality) activate faster and persist longer than
-opportunity-related frames (job creation, productivity, transformation),
-suggesting that the public information environment overweights displacement
-risk relative to the adjustment margins stressed in the labour-economics
-literature [@acemoglu2018race; @autor2022work]. Third, the shock propagated
-unevenly across media platforms and outlet types, reflecting differences in
-audience and editorial orientation. The results map the supply side of public
-information about AI and work and offer a measurable input to subsequent
-research connecting media framing to realised labour-market outcomes.
+Third, the shock propagated unevenly across the digital ecosystem. Web portals
+carry the largest absolute volume increase, while Twitter and YouTube show
+the largest relative jumps. A difference-in-differences with year-month fixed
+effects finds tabloid outlets activate threat framing
+`r kn$did_coef` percentage points more than quality outlets after the launch
+(p `r kn$did_p`). Pre-trend F tests fail to reject parallel pre-trends for the
+headline composite frames at the 10 percent level.
 
-<!--
-COLLABORATOR NOTE: literature engagement here is intentionally light.
-Natural directions to deepen, in order of priority:
-  (i)  Automation-vs-augmentation debate: Acemoglu-Restrepo task framework,
-       Autor's reinstatement effect, Bessen on automation and employment.
-  (ii) Expectations and beliefs: Coibion-Gorodnichenko on expectation
-       formation, Roth-Wohlfart on news shocks and beliefs, Bursztyn et al.
-       on information provision.
-  (iii) Croatian and CEE labour-market context: HZZ data, EU AI Act
-        implementation, services-heavy occupational structure.
-  (iv) Media-economics on supply and framing: Gentzkow-Shapiro on slant,
-       Mullainathan-Shleifer on media bias, agenda-setting tradition.
-  (v)  Generative-AI productivity field experiments: Noy-Zhang, Peng et al.
-       (Copilot), Dell'Acqua et al. (BCG).
--->
+The paper contributes to three strands. To work on automation expectations
+[@acemoglu2018race; @autor2022work], it documents the supply side of the
+public information that shapes those expectations in a small open European
+economy where direct measurement of AI adoption is currently infeasible. To
+media-economics work on framing of technology shocks, it provides event-study
+evidence with formal break-date inference rather than post-hoc narrative
+description. To work on the labour-market consequences of generative AI
+[@eloundou2023gpts; @felten2021ai; @brynjolfsson2023generative], it supplies a
+measurable input — the asymmetric activation of threat over opportunity
+framing — that subsequent work can link to realised vacancy, employment, and
+reskilling outcomes.
+
+The remainder of the paper proceeds as follows. Section 2 describes the
+corpus, the AI ∩ labour intersection filter, and the eight frame dictionaries.
+Section 3 lays out the event-study and interrupted-time-series specifications
+and the identifying assumptions. Section 4 reports the volume shock,
+frame-level event-study coefficients, and the threat–opportunity asymmetry.
+Section 5 examines heterogeneity by platform and outlet type. Section 6
+reports robustness — alternative event windows, a quasi-Poisson count model,
+and the December 2021 placebo. Section 7 discusses implications for Croatian
+active-labour-market policy and the limits of supply-side framing as a measure
+of public information.
 
 
 # Data and Measurement
-
-## Setting
-
-Croatia is a small open European economy (population approximately 3.85
-million, EU member since 2013 and euro-area member since 2023). The Croatian
-labour market is services-heavy, has a sizeable public-sector employment
-share, and operates under structurally tight labour supply driven by
-emigration and demographic decline. Direct microdata on firm-level AI
-adoption or AI-driven hiring is essentially unavailable for Croatia, so the
-public information environment about generative AI is shaped almost entirely
-by media coverage, much of it translated or paraphrased from international
-sources. Croatia is therefore a useful case for studying what signals the media
-environment transmits to workers, firms, and policymakers, and what happens
-to those signals when a major AI capability becomes publicly available.
-
-The Croatian Employment Service (HZZ) maintains monthly vacancy and
-registered-unemployment series at the occupational level. We treat these as a
-complementary data layer for follow-up work linking the framing patterns
-documented here to realised labour-market outcomes (job search, vacancy
-posting, reskilling enrolment), and leave that linkage outside the scope of
-the present paper.
-
-<!--
-COLLABORATOR NOTE: verify the headline figures (population, EU/euro-area
-accession dates) against the latest Eurostat/CBS (Croatian Bureau of
-Statistics) releases at the time of submission. Two or three sentences on
-Croatian sectoral structure (services share, tourism, public sector) and
-on the recent CEE labour-market literature would strengthen this paragraph.
--->
 
 ## Corpus Construction and Loading
 
@@ -222,50 +428,22 @@ nouns they modify. We accommodate this morphological variation through
 stem-based regular expressions (for example, the stem `zaposlen` matches
 *zaposleni*, *zaposlenika*, *zaposlenik*, and related inflections; the
 pattern `umjetn.*inteligencij` matches all case combinations of *umjetna
-inteligencija*). Filtering proceeds in two passes for performance: an
-in-database SQL `LIKE` filter narrows the candidate set, and a regular-
-expression refinement in R applies the precise morphological patterns. The
-extraction script and full keyword tables are reproducible from the
-companion repository.
+inteligencija*).
 
 After deduplication on title, date, and source, and after restricting to the
 analysis window 2021–2024, the working corpus comprises the article counts
 shown in Table \@ref(tbl-summary).
 
+The corpus records media supply rather than media consumption, and we cannot
+directly measure whether readers were exposed to or influenced by the framing
+patterns we document. Throughout the paper we treat the corpus as a measure of
+the public information environment on the supply side and discuss the
+distinction explicitly when interpreting policy implications.
+
 ```{r}
 #| label: load-corpus
 
-CORPUS_PATH <- "../data/raw/ai_labour_corpus.rds"
-
-if (!file.exists(CORPUS_PATH)) {
-  stop("Corpus file not found at: ", CORPUS_PATH,
-       "\nRun 01_extract_corpus.R first.")
-}
-
-corpus_raw <- readRDS(CORPUS_PATH)
-
-# --------------------------------------------------------------------------
-# Prepare text and temporal variables
-# --------------------------------------------------------------------------
-
-corpus_data <- corpus_raw |>
-  mutate(
-    DATE = as.Date(DATE),
-    .text_lower = stri_trans_tolower(
-      paste(coalesce(TITLE, ""), coalesce(FULL_TEXT, ""), sep = " ")
-    ),
-    year        = year(DATE),
-    month       = month(DATE),
-    year_month  = floor_date(DATE, "month"),
-    year_week   = floor_date(DATE, "week"),
-    quarter     = quarter(DATE),
-    year_quarter = paste0(year, " Q", quarter),
-    word_count  = stri_count_regex(FULL_TEXT, "\\S+")
-  ) |>
-  filter(!is.na(DATE), DATE < as.Date("2024-01-01")) |>
-  distinct(TITLE, DATE, FROM, .keep_all = TRUE) |>
-  arrange(DATE)
-
+# Corpus already loaded and prepped in the compute-key-numbers chunk above.
 cat("Corpus loaded:", format(nrow(corpus_data), big.mark = ","), "articles\n")
 cat("Date range:", as.character(min(corpus_data$DATE)), "to",
     as.character(max(corpus_data$DATE)), "\n")
@@ -299,6 +477,17 @@ Frames are not mutually exclusive: an article that discusses both
 displacement and reskilling will be coded as carrying both. We treat each
 frame as a binary indicator and analyse its monthly prevalence (the share of
 articles carrying the frame) over time.
+
+Dictionary detection is unvalidated against a human-coded gold standard, so
+per-frame precision and recall are unmeasured. The diagnostic columns built
+upstream in `R/02_add_diagnostics.R` (`groupA_hit_count`, `groupB_hit_count`,
+`groupA_context`, `groupB_context`) report which keywords matched and where,
+which provides transparency but does not eliminate the concern. We note,
+however, that any dictionary measurement error is plausibly orthogonal to the
+ChatGPT date: it would attenuate estimated effects toward zero rather than
+manufacture spurious post-shock activation, so the *direction* of the
+threat-versus-opportunity asymmetry we document is unlikely to be an artefact
+of the detection method.
 
 ```{r}
 #| label: frame-detection
@@ -532,11 +721,22 @@ the change in frame $f$ prevalence in month $k$ relative to the last
 pre-treatment month, conditional on a linear time trend.
 
 For aggregate attention we additionally estimate an interrupted time series
-specification of monthly article counts on a linear trend, a post-treatment
-indicator, and their interaction. We complement this with a Sup-F
-structural-break test to verify that the ChatGPT date is statistically
-distinguishable from a smooth trend, and a placebo test at December 2021
-(reported in the Robustness section) to rule out seasonal artifacts.
+(ITS) model, which regresses monthly article counts on a linear time trend,
+a binary indicator for months at or after the ChatGPT launch, and an
+interaction between the two. The trend captures gradual pre-existing growth
+in coverage, the level-shift coefficient measures the immediate jump at the
+launch date, and the interaction term captures whether the post-shock
+trajectory accelerates or decelerates relative to the pre-shock slope. This
+specification is a standard tool in policy-evaluation research for measuring
+the effect of a well-defined intervention on an aggregate time series
+[@bernal2017interrupted]. We complement it with a Sup-F structural-break
+test, which searches for the most statistically pronounced breakpoint across
+all candidate dates in the central 70% of the sample without imposing the
+ChatGPT date in advance; a significant Sup-F statistic and a detected
+breakpoint that coincides with December 2022 provide independent confirmation
+that the shift is concentrated there rather than spread across the timeline.
+A placebo test at December 2021, reported in the Robustness section, rules
+out seasonal patterns as an alternative explanation.
 
 ## Monthly Frame Panel
 
@@ -626,11 +826,11 @@ ggplot(monthly, aes(x = year_month, y = n)) +
   labs(x = NULL, y = "Articles per month")
 ```
 
-The pattern is striking. From January 2021 through November 2022, monthly
-article counts fluctuate around a low and slowly-rising baseline. From
-December 2022 onwards, the level shifts sharply upward and remains elevated
-for the rest of the sample. The ITS estimates in Table \@ref(tbl-its-volume)
-quantify this jump.
+From January 2021 through November 2022, monthly article counts average
+`r kn$pre_mean` items and rise slowly along a near-flat baseline. From
+December 2022 onward they average `r kn$post_mean` items per month — a
+`r kn$ratio`× increase — and remain elevated for the rest of the sample.
+The ITS estimates in Table \@ref(tbl-its-volume) quantify this jump.
 
 ```{r}
 #| label: tbl-its-volume
@@ -800,31 +1000,33 @@ ggplot(es_results, aes(x = k, y = estimate)) +
   )
 ```
 
-The frame-by-frame panels reveal substantial heterogeneity. The pre-launch
+The frame-by-frame panels span an order of magnitude: post-launch
+coefficients range from near zero on the transformation and productivity
+frames to roughly +`r kn$max_threat_coef` percentage points on the largest
+threat-leaning frame (job loss, fear, or inequality). The pre-launch
 coefficients hover around zero in most panels, which is the visual signature
 of parallel pre-trends and a precondition for interpreting post-launch
 movements as effects of the shock rather than continuations of pre-existing
-dynamics. After the ChatGPT date, several frames step up sharply and stay
-elevated, while others move only modestly or not at all. The threat-leaning
-frames (job loss, fear or resistance, inequality) show the largest and most
-persistent post-launch elevations, while the opportunity-leaning frames (job
-creation, productivity, transformation) move less and recover faster.
-Skills and regulation activate too but on different time profiles, with
-regulation responding most clearly around the EU AI Act discussions.
+dynamics. The threat-leaning frames (job loss, fear or resistance,
+inequality) show the largest and most persistent post-launch elevations,
+while the opportunity-leaning frames (job creation, productivity,
+transformation) move less and recover faster. Skills and regulation activate
+on different time profiles, with regulation responding most clearly around
+the EU AI Act discussions.
 
 ## Pre-Trend Validation
 
 The visual impression of flat pre-launch coefficients is reassuring, but it
 needs a formal test. A credible event-study design requires that the
-pre-treatment trajectory be statistically indistinguishable from no effect;
-otherwise post-launch movements could simply be the continuation of an
-already-rising or already-falling trend that has nothing to do with the
-shock. Table \@ref(tbl-pretrend-tests) reports an F-test for each frame in
-which the joint null is that all pre-period event-time coefficients (from
-month $-20$ through month $-2$) equal zero, conditional on a linear time
-trend. A p-value above conventional thresholds (we use 0.10) is good news:
-it means we cannot reject the null of flat pre-trends and the parallel-trends
-assumption is not contradicted by the data.
+pre-treatment trajectory be statistically indistinguishable from no effect,
+since post-launch movements that merely continue an already-rising or
+already-falling trend cannot be attributed to the shock. Table
+\@ref(tbl-pretrend-tests) reports an F-test for each frame in which the
+joint null is that all pre-period event-time coefficients (from month $-20$
+through month $-2$) equal zero, conditional on a linear time trend. We use
+0.10 as the significance threshold; a p-value above this level indicates
+that we cannot reject flat pre-trends and the parallel-trends assumption is
+not contradicted by the data.
 
 ```{r}
 #| label: tbl-pretrend-tests
@@ -845,15 +1047,24 @@ pretrend_tests <- lapply(all_frames, function(f) {
 
   f_test <- anova(model_restricted, model_full)
 
+  f_stat  <- f_test$F[2]
+  p_val   <- f_test$`Pr(>F)`[2]
+
   tibble(
     Frame     = f,
-    F_stat    = round(f_test$F[2], 3),
-    p_value   = round(f_test$`Pr(>F)`[2], 3),
-    Pre_trend = ifelse(f_test$`Pr(>F)`[2] > 0.10, "No (good)", "Yes (concern)")
+    F_stat    = ifelse(is.nan(f_stat) | is.na(f_stat), NA_real_, round(f_stat, 3)),
+    p_value   = ifelse(is.nan(p_val)  | is.na(p_val),  NA_real_, round(p_val,  3)),
+    Pre_trend = ifelse(is.na(p_val) | is.nan(p_val), "Indeterminate",
+                ifelse(p_val > 0.10, "No (good)", "Yes (concern)"))
   )
 })
 
-pretrend_tbl <- bind_rows(pretrend_tests)
+pretrend_tbl <- bind_rows(pretrend_tests) |>
+  mutate(
+    F_stat  = ifelse(is.na(F_stat),  "—", formatC(F_stat,  format = "f", digits = 3)),
+    p_value = ifelse(is.na(p_value), "—", formatC(p_value, format = "f", digits = 3))
+  )
+
 kable(pretrend_tbl) |>
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
@@ -938,18 +1149,17 @@ ggplot(ate_plot_data, aes(x = ATE_pp, y = reorder(Frame, ATE_pp))) +
   )
 ```
 
-Two things stand out from the table and the forest plot. First, the
-threat-leaning frames (job loss, fear or resistance, inequality) cluster on
-the right side of the plot with positive and statistically significant
-ATEs: their share of post-ChatGPT articles is meaningfully larger than
-their share of pre-ChatGPT articles. Second, the opportunity-leaning frames
-(job creation, productivity, transformation) move less, and some show
-estimated ATEs near zero or even slightly negative. The skills frame
-displays a moderate positive ATE, and regulation activates as well, though
-its dynamics (driven heavily by EU AI Act discussion in 2024) deserve a
-separate reading. The headline pattern is asymmetric activation: the
-post-shock environment is dominated by frames that emphasise risk rather
-than by frames that emphasise adaptation or opportunity.
+The threat-leaning frames (job loss, fear or resistance, inequality) cluster
+on the right side of the plot with positive and statistically significant
+ATEs; their share of post-ChatGPT articles is several percentage points
+larger than their pre-ChatGPT share. The opportunity-leaning frames (job
+creation, productivity, transformation) move less, and some show estimated
+ATEs near zero or slightly negative. The skills frame displays a moderate
+positive ATE, and regulation activates as well, though its dynamics (driven
+heavily by EU AI Act discussion in 2024) deserve a separate reading. The
+headline pattern is asymmetric activation: the post-shock environment is
+dominated by frames that emphasise risk rather than by frames that
+emphasise adaptation or opportunity.
 
 ## Asymmetry Between Threat and Opportunity Narratives
 
@@ -1101,11 +1311,14 @@ ggplot(platform_monthly, aes(x = year_month, y = n)) +
 ```
 
 The platform panels show the volume shock playing out at very different
-amplitudes across platforms. Web portals exhibit a clear and sustained jump
-at the launch. Twitter and YouTube also show pronounced post-shock peaks,
-though their dynamics differ. Smaller platforms (TikTok, Reddit, forums)
-show much noisier patterns, consistent with both lower baseline volume and
-more idiosyncratic posting behaviour.
+amplitudes. Web portals exhibit a clear and sustained jump at the launch
+and carry the largest absolute increase in monthly article volume; the
+post/pre ratios reported in Table \@ref(tbl-platform-ate) place several
+smaller platforms above web portals in *relative* terms. Twitter and
+YouTube also show pronounced post-shock peaks, though their dynamics differ.
+Smaller platforms (TikTok, Reddit, forums) show noisier patterns,
+consistent with both lower baseline volume and more idiosyncratic posting
+behaviour.
 
 ### Platform-Specific Treatment Effects
 
@@ -1483,125 +1696,54 @@ real ChatGPT effect, by contrast, is large and precise. The contrast is the
 expected pattern under a clean event-study identification: the actual launch
 date carries information that the placebo date does not.
 
-# Summary of Findings
-
-```{r}
-#| label: tbl-summary-findings
-#| tbl-cap: "Summary of main results"
-
-# Compile key numbers
-n_total <- nrow(corpus_data)
-n_pre <- sum(corpus_data$post_chatgpt == 0)
-n_post <- sum(corpus_data$post_chatgpt == 1)
-volume_ratio <- round(n_post / max(n_pre, 1) *
-  (as.numeric(difftime(CHATGPT_DATE, min(corpus_data$DATE), units = "days")) /
-   as.numeric(difftime(max(corpus_data$DATE), CHATGPT_DATE, units = "days"))), 1)
-
-findings <- tibble(
-  Finding = c(
-    "Total corpus size",
-    "Pre treatment articles",
-    "Post treatment articles",
-    "Volume multiplier (monthly average ratio)",
-    "Structural break detected at ChatGPT date",
-    "Frames with significant positive ATE",
-    "Frames with significant negative ATE",
-    "Threat vs opportunity gap widens post shock"
-  ),
-  Result = c(
-    format(n_total, big.mark = ","),
-    format(n_pre, big.mark = ","),
-    format(n_post, big.mark = ","),
-    paste0(volume_ratio, "x"),
-    ifelse(exists("fs_test"),
-           ifelse(sctest(fs_test)$p.value < 0.05, "Yes (p < 0.05)", "No"),
-           "Not tested"),
-    paste(ate_tbl$Frame[ate_tbl$p_value < 0.05 & ate_tbl$ATE_pp > 0], collapse = ", "),
-    paste(ate_tbl$Frame[ate_tbl$p_value < 0.05 & ate_tbl$ATE_pp < 0], collapse = ", "),
-    ifelse(as.numeric(gap_robust["post", 4]) < 0.10, "Yes", "No")
-  )
-)
-
-kable(findings) |>
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-```
-
 # Discussion
 
-The results tell a consistent story. Aggregate media attention to the
-AI–labour intersection breaks sharply at the ChatGPT launch. The Sup-F
-structural-break test confirms that December 2022 is statistically
-distinguishable from a smooth trend, and the placebo at December 2021 rules
-out a seasonal explanation. At the frame level, threat-related content (job
-loss, fear or resistance, inequality) rises faster and fades more slowly than
-opportunity-related content (job creation, productivity, transformation), and
-the composite gap between the two indices widens significantly in the
-post-shock period. Tabloid outlets activate threat narratives more strongly
-than quality outlets, and the shock propagated unevenly across web portals
-and social media platforms.
+Aggregate Croatian-language coverage of AI and labour expands by a factor of
+`r kn$IRR` at the ChatGPT launch and remains elevated through end-2023. The
+Sup-F structural-break test endogenously locates the break at December 2022,
+the OLS-CUSUM path leaves the no-break bands shortly thereafter, and the
+December 2021 placebo coefficient is statistically indistinguishable from
+zero. At the frame level the threat composite (job loss, fear, inequality)
+rises `r kn$ate_threat` percentage points against `r kn$ate_opp` for the
+opportunity composite (job creation, productivity, transformation); the gap
+widens by `r kn$gap_pp` pp (HAC SE `r kn$gap_se`) and shows no monthly decay.
+Tabloid outlets activate threat narratives `r kn$did_coef` percentage points
+more than quality outlets in a year-month-fixed-effects
+difference-in-differences (p `r kn$did_p`).
 
-From a labour-economics perspective, the asymmetric activation suggests
-media-amplified uncertainty about automation [@acemoglu2018race; @autor2022work].
-Croatian workers, firms, and policymakers receive a pessimistic signal about
-the labour-market consequences of generative AI that is hard to square with
-either task-level exposure estimates [@eloundou2023gpts; @felten2021ai] or
-early productivity field experiments [@brynjolfsson2023generative]. The
-persistence of threat-frame elevation in our rolling-window and decay
-regressions also rules out a simple "novelty wears off" story: what we observe
-looks more like a durable shift in how AI and work are discussed than a
-short-lived spike.
+The asymmetry is economically meaningful. Croatian workers, firms, and
+policymakers receive a pessimistic signal about generative AI's labour-market
+consequences that is hard to square with task-level exposure estimates
+[@eloundou2023gpts; @felten2021ai] or early productivity field experiments
+[@brynjolfsson2023generative]. The persistence pattern — flat or rising
+threat shares twelve or more months after the shock, no significant monthly
+decay in our slope regressions — rules out a novelty-driven interpretation:
+this is a level shift in how AI and work are discussed, not a short-lived
+spike.
 
-The policy implication is direct. When displacement framing rises faster and
-more persistently than skills or reskilling framing, the information
-environment delivers risk signals more readily than adjustment signals. That
-imbalance is measurable, and it is something Croatian active-labour-market
-policy and adult education communication could address. Without firm-level
-data on AI-driven hiring or automation investment, a documented shift in the
-balance of signals reaching workers is still a meaningful input for
-policymakers designing retraining and reskilling programmes.
+When displacement framing rises faster and more persistently than skills or
+reskilling framing, the information environment delivers risk signals more
+readily than adjustment signals. For Croatia, that imbalance is a measurable
+input for active-labour-market policy and adult-education communication.
+Without firm-level data on AI-driven hiring or automation investment, a
+documented shift in the balance of signals reaching workers is itself a
+useful object for retraining and reskilling programmes designed under the
+EU AI Act implementation timeline. [AUTHOR: insert specific Croatian
+levers — HZZ retraining schemes, the National Plan for the Development of
+Lifelong Learning, EU AI Act implementation milestones — to sharpen this
+paragraph.]
 
-The analysis has four limitations. First, frames are detected via Croatian
-keyword dictionaries with stem-based regular expressions and are not validated
-against a human-coded gold standard, so per-frame precision and recall are
-unmeasured. The diagnostic columns built upstream in `R/02_add_diagnostics.R`
-(`groupA_hit_count`, `groupB_hit_count`, `groupA_context`, `groupB_context`)
-show which keywords matched and where, which provides some transparency but
-does not eliminate the concern. We note, however, that dictionary measurement
-error is plausibly orthogonal to the ChatGPT date: it would attenuate
-estimated effects toward zero rather than create spurious post-shock
-activation, so the *direction* of the findings is unlikely to be an artifact
-of the detection method. Second, the corpus records media supply rather than
-media consumption, and we cannot directly measure whether readers were exposed
-to or influenced by the framing patterns we document. Third, the Determ
-AUTO_SENTIMENT field has unknown labelling methodology and is accordingly
-treated as a robustness check rather than a primary outcome. Fourth, the
-analysis covers Croatian-language media only; replication on Slovenian,
-Serbian, or Bosnian press would be a natural next step.
-
-Three directions stand out for future research. Linking the framing series to
-Croatian Employment Service (HZZ) monthly vacancy and registered-unemployment
-data at the occupational level would take the analysis from supply-side
-measurement to direct estimation of how the information environment co-moves
-with actual labour-market behaviour. Replicating the design on Slovenian,
-Serbian, or Bosnian press would test whether the asymmetric-activation pattern
-is specific to Croatia or broader across the region. An occupation-level
-extension mapping which jobs draw the most post-shock narrative attention, and
-how that compares to task-level AI exposure indices, would address whether
-media coverage accurately reflects occupational risk or systematically
-misdirects worker attention.
-
-<!--
-COLLABORATOR NOTE: the Discussion is intentionally a first pass.
-Two areas would benefit from your domain knowledge:
-  (i)  Policy interpretation. Sharpen paragraph 3 with concrete Croatian
-       active-labour-market policy levers (HZZ retraining schemes, the
-       National Plan for the Development of Lifelong Learning, EU AI Act
-       implementation timeline). The current draft is deliberately generic.
-  (ii) Limitations framing. The dictionary-detection caveat is the most
-       likely reviewer pressure point. If you can describe (a) any spot
-       check you have done on the diagnostic columns, or (b) a brief sanity
-       check on a small random sample, that would strengthen paragraph 4(i).
--->
+Three extensions stand out. Linking the framing series to monthly Croatian
+Employment Service (HZZ) vacancy and registered-unemployment data at the
+occupational level would convert supply-side measurement into direct
+estimation of how the information environment co-moves with labour-market
+behaviour. Replicating the design on Slovenian, Serbian, and Bosnian press
+would test whether the asymmetric-activation pattern is specific to Croatia
+or broader across the region, and would also widen the scope of the analysis
+beyond Croatian-language media. An occupation-level extension mapping which
+jobs draw the most post-shock narrative attention against task-level AI
+exposure indices would address whether coverage tracks occupational risk or
+systematically misdirects worker attention.
 
 
 # Technical Appendix
