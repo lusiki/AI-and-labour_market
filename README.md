@@ -32,7 +32,7 @@ The descriptive analysis provides a comprehensive overview of the corpus: tempor
 
 | # | Title | Code | Rendered report |
 |---|-------|------|-----------------|
-| **P1** | The ChatGPT Shock and Public Information about AI and Work | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
+| **P1** | The ChatGPT Shock and Public Information about AI and Work | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/R/04_paper1_chatgpt_natural_experiment.html) |
 
 ## Working drafts / future extensions
 
