@@ -10,9 +10,11 @@
 
 ## Project Overview
 
-This project analyzes how Croatian digital media covered the intersection of artificial intelligence and the labour market between January 2021 and December 2023. The corpus was extracted from the [Determ](https://www.determ.com/) monitoring platform (approximately 20 million records) using a two-stage intersection filter. An article enters the corpus only if it contains at least one AI-related term **AND** at least one labour-market term. Three separate analyses attack the same corpus from different angles, each structured as a standalone economics paper.
+This project analyzes how Croatian digital media covered the intersection of artificial intelligence and the labour market between January 2021 and December 2023. The corpus was extracted from the [Determ](https://www.determ.com/) monitoring platform (approximately 20 million records) using a two-stage intersection filter: an article enters the corpus only if it contains at least one AI-related term **AND** at least one labour-market term.
 
-All three analyses share the same data pipeline. The extraction script (`01_extract_corpus.R`) pulls candidate articles via SQL `LIKE` patterns and refines them with regex. The diagnostics script (`02_add_diagnostics.R`) adds columns showing which keywords matched and where, enabling quality control. Each Quarto document loads the resulting RDS file and builds its own analytical layer on top.
+The **active manuscript** (Paper 1, listed below) is the ChatGPT-shock event study, which is being prepared for submission to a Croatian economics journal. Two additional analyses (Paper 2 on occupation–exposure mismatch and Paper 3 on cross-platform cascades) are kept in the repository as **working drafts and future extensions**; they share the same data pipeline but are not under active submission.
+
+The shared pipeline: the extraction script (`01_extract_corpus.R`) pulls candidate articles via SQL `LIKE` patterns and refines them with regex; the diagnostics script (`02_add_diagnostics.R`) adds columns showing which keywords matched and where, enabling quality control. Each Quarto document loads the resulting RDS file and builds its own analytical layer on top.
 
 ---
 
@@ -26,21 +28,28 @@ The descriptive analysis provides a comprehensive overview of the corpus: tempor
 
 ---
 
-## Papers
+## Active manuscript
 
 | # | Title | Code | Rendered report |
 |---|-------|------|-----------------|
-| **P1** | The ChatGPT Shock and Media Framing of AI Labour Displacement | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
-| **P2** | AI Exposure and Media Salience Mismatch | [`05_paper2_occupation_exposure_mismatch.qmd`](R/05_paper2_occupation_exposure_mismatch.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/05_paper2_occupation_exposure_mismatch.html) |
-| **P3** | Cross-Platform Narrative Propagation in AI Labour Coverage | [`06_paper3_cross_platform_cascades.qmd`](R/06_paper3_cross_platform_cascades.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/06_paper3_cross_platform_cascades.html) |
+| **P1** | The ChatGPT Shock and Public Information about AI and Work | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
+
+## Working drafts / future extensions
+
+The two analyses below share the same corpus and pipeline as Paper 1 but are **not under active submission**. They are retained as starting points for follow-up work.
+
+| # | Title | Code | Rendered report |
+|---|-------|------|-----------------|
+| P2 | AI Exposure and Media Salience Mismatch | [`05_paper2_occupation_exposure_mismatch.qmd`](R/05_paper2_occupation_exposure_mismatch.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/05_paper2_occupation_exposure_mismatch.html) |
+| P3 | Cross-Platform Narrative Propagation in AI Labour Coverage | [`06_paper3_cross_platform_cascades.qmd`](R/06_paper3_cross_platform_cascades.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/06_paper3_cross_platform_cascades.html) |
 
 ---
 
-## P1. The ChatGPT Shock and Media Framing of AI Labour Displacement
+## P1. The ChatGPT Shock and Public Information about AI and Work
 
-*An Event Study Approach Using Croatian Digital Media (2021--2024)*
+*Event-Study Evidence from Croatian Digital Media (2021–2024)*
 
-This paper treats the release of ChatGPT on November 30, 2022 as an exogenous information shock and estimates its causal effect on media framing of AI and work. The identifying assumption is that the ChatGPT launch was not anticipated by Croatian media outlets and therefore constitutes a clean break in the information environment.
+This paper treats the release of ChatGPT on November 30, 2022 as an exogenous shock to the salience of generative-AI capabilities and estimates its effect on Croatian digital media coverage of the AI–labour intersection. The identifying assumption is that the ChatGPT launch was not anticipated by Croatian media outlets and therefore constitutes a clean break in the public information environment about AI and work. The framing is anchored in the labour-economics literature on automation (Acemoglu & Restrepo, Autor, Bessen) and recent task-level AI exposure evidence (Eloundou et al., Felten et al., Brynjolfsson et al.).
 
 **Methodology.** The analysis begins with an interrupted time-series regression on monthly article volume, fitted with HAC-robust standard errors. A formal structural break test (Sup-F and OLS-CUSUM) verifies that the ChatGPT date is statistically distinguishable from a smooth trend. A placebo test at December 2021 (exactly one year before the actual shock) confirms the effect is specific to the real event.
 
@@ -51,14 +60,18 @@ This paper treats the release of ChatGPT on November 30, 2022 as an exogenous in
 - Platform-specific treatment effects (web, Facebook, Twitter, YouTube, etc.)
 - Difference-in-differences comparing tabloid vs. quality outlets using the `fixest` package
 
-**Key next steps:**
-- Strengthen theoretical framing (information economics, Bayesian updating models)
-- Validate dictionary frames against a human-coded subsample
-- Connect media framing shifts to downstream outcome data (Google Trends reskilling queries, HZZ vacancy statistics)
+**Status / next steps:**
+- Theoretical framing: rewritten around the labour-economics literature on automation and generative-AI exposure (Acemoglu & Restrepo, Autor, Bessen, Eloundou et al., Felten et al., Brynjolfsson et al.). See `references.bib` for the starter bibliography; collaborators are expected to deepen citations.
+- Dictionary validation: deliberately out of scope for this submission. The Discussion acknowledges the limitation and argues that measurement error is plausibly orthogonal to the ChatGPT date (i.e. attenuates effects toward zero rather than generating spurious activation).
+- Linking media framing shifts to realised labour-market outcomes (HZZ vacancy and registered-unemployment series at the occupational level) is flagged as the natural follow-up.
 
 ---
 
-## P2. AI Exposure and Media Salience Mismatch
+## Working draft details
+
+The two subsections below describe Papers 2 and 3 as they currently stand. They are working drafts; methodology and conclusions may change before any future submission.
+
+### P2. AI Exposure and Media Salience Mismatch
 
 *Which Occupations Get the Narrative? Evidence from Croatian Digital Media*
 
@@ -79,7 +92,7 @@ This paper asks whether the occupations that dominate the Croatian AI--labour na
 
 ---
 
-## P3. Cross-Platform Narrative Propagation
+### P3. Cross-Platform Narrative Propagation
 
 *Information Cascades and Platform Heterogeneity in Croatian Digital Media*
 
