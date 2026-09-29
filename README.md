@@ -32,7 +32,7 @@ The descriptive analysis provides a comprehensive overview of the corpus: tempor
 
 | # | Title | Code | Rendered report |
 |---|-------|------|-----------------|
-| **P1** | The ChatGPT Shock and Public Information about AI and Work | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
+| **P1** | ChatGPT as an Exogenous Shock: Media Coverage of AI's Labour-Market Implications in Croatia | [`04_paper1_chatgpt_natural_experiment.qmd`](R/04_paper1_chatgpt_natural_experiment.qmd) | [HTML report](https://raw.githack.com/lusiki/AI-and-labour_market/main/output/reports/04_paper1_chatgpt_natural_experiment.html) |
 
 ## Working drafts / future extensions
 
@@ -45,20 +45,23 @@ The two analyses below share the same corpus and pipeline as Paper 1 but are **n
 
 ---
 
-## P1. The ChatGPT Shock and Public Information about AI and Work
+## P1. ChatGPT as an Exogenous Shock: Media Coverage of AI's Labour-Market Implications in Croatia
 
-*Event-Study Evidence from Croatian Digital Media (2021–2024)*
+*Event-study evidence from Croatian digital media, January 2021 – August 2026*
+
+P1 uses the extended corpus (`data/raw/ai_labour_corpus_2021_2026.rds`, about 135,000 items) extracted from the merged Determ database (`determDB_merged.duckdb`, about 42 million records). Papers 2 and 3 and the descriptive analysis still use the original 2021–2023 extract.
 
 This paper treats the release of ChatGPT on November 30, 2022 as an exogenous shock to the salience of generative-AI capabilities and estimates its effect on Croatian digital media coverage of the AI–labour intersection. The identifying assumption is that the ChatGPT launch was not anticipated by Croatian media outlets and therefore constitutes a clean break in the public information environment about AI and work. The framing is anchored in the labour-economics literature on automation (Acemoglu & Restrepo, Autor, Bessen) and recent task-level AI exposure evidence (Eloundou et al., Felten et al., Brynjolfsson et al.).
 
-**Methodology.** The analysis begins with an interrupted time-series regression on monthly article volume, fitted with HAC-robust standard errors. A formal structural break test (Sup-F and OLS-CUSUM) verifies that the ChatGPT date is statistically distinguishable from a smooth trend. A placebo test at December 2021 (exactly one year before the actual shock) confirms the effect is specific to the real event.
+**Methodology.** An interrupted time series on monthly volume (level shift and trend change at the launch, HAC standard errors), Sup-F and Bai–Perron break tests that locate breaks without imposing the launch date, and a December 2021 placebo.
 
-**Core contribution.** Eight interpretive frames (job loss, job creation, transformation, skills, regulation, productivity, inequality, and fear/resistance) are detected via keyword dictionaries. For each frame, monthly prevalence shares are regressed on event-time dummies relative to November 2022, with a linear time trend. The pre-trend coefficients are tested jointly for each frame to validate the parallel-trends assumption. The resulting coefficient plots show which frames activated after the shock, how quickly, and whether the effect persisted or decayed.
+**Core contribution.** Eight interpretive frames (job loss, job creation, transformation, skills, regulation, productivity, inequality, and fear/resistance) are detected via keyword dictionaries. For each frame, monthly prevalence shares are regressed on three-month event-time bins relative to September–November 2022, and pre-launch bins are tested jointly for each frame. The resulting coefficient plots show which frames activated after the shock, how quickly, and whether the effect persisted or decayed.
 
 **Additional analyses:**
 - A composite *threat index* (job loss + fear + inequality) and *opportunity index* (job creation + productivity + transformation), tested for asymmetric activation
 - Platform-specific treatment effects (web, Facebook, Twitter, YouTube, etc.)
-- Difference-in-differences comparing tabloid vs. quality outlets using the `fixest` package
+- Difference-in-differences comparing tabloid vs. quality outlets (domain-based outlet list in `config.yml`), with a wild-cluster bootstrap
+- Reader-engagement test: interactions on threat- vs opportunity-framed web articles
 
 **Status / next steps:**
 - Theoretical framing: rewritten around the labour-economics literature on automation and generative-AI exposure (Acemoglu & Restrepo, Autor, Bessen, Eloundou et al., Felten et al., Brynjolfsson et al.). See `references.bib` for the starter bibliography; collaborators are expected to deepen citations.

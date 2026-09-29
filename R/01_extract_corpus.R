@@ -20,6 +20,7 @@ log_step(2, TOTAL_STEPS, "Connecting to database...")
 
 drv <- duckdb::duckdb(dbdir = path_database, read_only = TRUE)
 con <- DBI::dbConnect(drv)
+DBI::dbExecute(con, "SET memory_limit = '20GB'")   # merged DB is ~97 GB; cap RAM use
 
 tables     <- DBI::dbListTables(con)
 main_table <- db_table %||% tables[1]
@@ -39,12 +40,22 @@ text_expr    <- "COALESCE(TITLE, '') || ' ' || COALESCE(FULL_TEXT, '')"
 ai_where     <- build_sql_or(ai_sql, text_expr)
 labour_where <- build_sql_or(labour_sql, text_expr)
 
+ex          <- CONFIG$extraction
+excluded    <- paste0("'", ex$exclude_source_types, "'", collapse = ", ")
+
 query <- paste0('
 SELECT
-  DATE, TITLE, FULL_TEXT, "FROM", SOURCE_TYPE,
-  AUTO_SENTIMENT, REACH, INTERACTIONS, URL, LANGUAGES
+  DATE,
+  replace(TITLE, chr(0), \'\')     AS TITLE,       -- API text can contain NUL bytes,
+  replace(FULL_TEXT, chr(0), \'\') AS FULL_TEXT,   -- which R strings cannot hold
+  replace("FROM", chr(0), \'\')    AS "FROM",
+  SOURCE_TYPE, AUTO_SENTIMENT, REACH, INTERACTIONS,
+  replace(URL, chr(0), \'\')       AS URL,
+  LANGUAGES
 FROM "', main_table, '"
-WHERE ', ai_where, '
+WHERE "DATE" >= \'', ex$start_date, '\' AND "DATE" <= \'', ex$end_date, '\'
+  AND SOURCE_TYPE NOT IN (', excluded, ')
+  AND ', ai_where, '
   AND ', labour_where)
 
 cat("      Executing query...\n")
@@ -100,7 +111,7 @@ cat("      Date range:", as.character(min(corpus_data$DATE)), "to",
 # --- Save --------------------------------------------------------------------
 log_step(6, TOTAL_STEPS, "Saving...")
 
-saveRDS(corpus_data, path_raw_corpus)
-cat("      Saved to:", path_raw_corpus, "\n")
-cat("      Size:", round(file.size(path_raw_corpus) / 1e6, 1), "MB\n\n")
+saveRDS(corpus_data, path_raw_corpus_extended)
+cat("      Saved to:", path_raw_corpus_extended, "\n")
+cat("      Size:", round(file.size(path_raw_corpus_extended) / 1e6, 1), "MB\n\n")
 cat("DONE! Corpus has", format(nrow(corpus_data), big.mark = ","), "articles.\n")

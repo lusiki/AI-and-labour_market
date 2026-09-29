@@ -8,11 +8,12 @@
 # --- Paths -------------------------------------------------------------------
 paths:
   # Source database (not included in repo — see README for access instructions)
-  database: "C:/Users/lsikic/Luka C/DetermDB/determDB.duckdb"
-  db_table: "media_data"
+  database: "C:/Users/lsikic/Luka C/DetermDB/determDB_merged.duckdb"
+  db_table: "media_data_all"
 
   # Data directories (relative to project root)
-  raw_corpus: "data/raw/ai_labour_corpus.rds"
+  raw_corpus: "data/raw/ai_labour_corpus.rds"                     # 2021-2024 extract (papers 2-3, EDA)
+  raw_corpus_extended: "data/raw/ai_labour_corpus_2021_2026.rds"  # merged DB extract (paper 1)
   diagnostic_corpus: "data/processed/ai_labour_corpus_diagnostic.rds"
   analysed_corpus: "data/processed/ai_labour_corpus_analysed.rds"
 
@@ -23,6 +24,12 @@ paths:
 
 # --- Corpus extraction -------------------------------------------------------
 extraction:
+  # Sample window and excluded platforms (reader comments are not media content)
+  start_date: "2021-01-01"
+  end_date: "2026-08-31"          # last complete month in the merged DB
+  exclude_source_types:
+    - "comment"
+
   # SQL LIKE patterns for initial fast filter (Group A: AI/Technology)
   ai_sql_terms:
     - "umjetn%inteligencij%"
@@ -315,6 +322,33 @@ outlet_types:
     - "lider"
     - "forbes.*hr"
 
+# --- Paper 1 outlet classification (web domains) -------------------------------
+# Our own classification, applied to web items only. A host matches an outlet if
+# it equals one of its domains or is a subdomain of one. Type follows editorial
+# model (tabloid vs quality press, cf. Esser 1999); owner follows Perusko (2024)
+# and, for Net.hr, the 2021 RTL takeover announcement.
+paper1_outlets:
+  exclude_hosts:                  # subdomains that are separate outlets
+    - "emedjimurje.net.hr"
+  outlets:
+    - {name: "24sata",             domains: ["24sata.hr"],                 type: "Tabloid",  owner: "Styria Media Group"}
+    - {name: "Index.hr",           domains: ["index.hr"],                  type: "Tabloid",  owner: "Index Promocija"}
+    - {name: "Net.hr",             domains: ["net.hr"],                    type: "Tabloid",  owner: "RTL Hrvatska (CME)"}
+    - {name: "Jutarnji list",      domains: ["jutarnji.hr"],               type: "Quality",  owner: "Hanza Media"}
+    - {name: "Večernji list",      domains: ["vecernji.hr"],               type: "Quality",  owner: "Styria Media Group"}
+    - {name: "Dnevnik.hr",         domains: ["dnevnik.hr"],                type: "Quality",  owner: "United Group"}
+    - {name: "N1 Hrvatska",        domains: ["n1info.hr", "hr.n1info.com"], type: "Quality", owner: "United Group"}
+    - {name: "Tportal",            domains: ["tportal.hr"],                type: "Quality",  owner: "Hrvatski Telekom"}
+    - {name: "Telegram",           domains: ["telegram.hr"],               type: "Quality",  owner: "Telegram Media Grupa"}
+    - {name: "Slobodna Dalmacija", domains: ["slobodnadalmacija.hr"],      type: "Regional", owner: "Hanza Media"}
+    - {name: "Novi list",          domains: ["novilist.hr"],               type: "Regional", owner: "Novi list d.d."}
+    - {name: "HRT",                domains: ["hrt.hr"],                    type: "Public",   owner: "HRT (public broadcaster)"}
+    - {name: "Bug",                domains: ["bug.hr"],                    type: "Tech",     owner: "Bug d.o.o."}
+    - {name: "Netokracija",        domains: ["netokracija.com"],           type: "Tech",     owner: "Infobip"}
+    - {name: "Poslovni dnevnik",   domains: ["poslovni.hr"],               type: "Business", owner: "Styria Media Group"}
+    - {name: "Lider",              domains: ["lider.media", "lidermedia.hr"], type: "Business", owner: "Lider media"}
+    - {name: "Forbes Hrvatska",    domains: ["forbes.hr", "forbeshrvatska.com"], type: "Business", owner: "Forbes Hrvatska"}
+
 # --- Key events timeline -----------------------------------------------------
 events:
   - date: "2022-11-30"
@@ -329,6 +363,18 @@ events:
   - date: "2024-03-13"
     label: "EU AI Act adopted"
     description: "European Parliament formally adopts the EU AI Act"
+
+# Paper 1: `treatment` is the event; `secondary` are reference markers only.
+paper1_events:
+  treatment: "2022-12-01"         # first full month after the 2022-11-30 ChatGPT release
+  placebo: "2021-12-01"
+  secondary:
+    - date: "2023-03-14"
+      label: "GPT-4 release"
+    - date: "2024-03-13"
+      label: "EU AI Act adopted"
+    - date: "2024-08-01"
+      label: "EU AI Act in force"
 
 # --- Analysis parameters -----------------------------------------------------
 analysis:
