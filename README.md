@@ -34,7 +34,7 @@ The earlier descriptive analysis reports temporal patterns, frame prevalence, ac
 |---|---|---|
 | **After ChatGPT: Media Coverage of AI's Labour-Market Implications in Croatia** | [PDF](output/working-paper/ChatGPT_Croatia_Working_Paper.pdf?raw=1) · [Word](output/working-paper/ChatGPT_Croatia_Working_Paper.docx?raw=1) · [HTML](output/working-paper/ChatGPT_Croatia_Working_Paper.html?raw=1) | [Manuscript template](R/04_working_paper_template.md) · [analysis](R/04_working_paper_analysis.R) · [build script](R/04_build_working_paper.py) |
 
-The PDF, Word and HTML links download the same working-paper edition. The [earlier Quarto draft](R/04_paper1_chatgpt_natural_experiment.qmd) is retained for project history and is superseded by this edition.
+The PDF, Word and HTML links download the same final working-paper edition. This edition replaces the earlier Paper 1 Quarto draft and report.
 
 ## Working drafts / future extensions
 
@@ -119,10 +119,10 @@ AI-and-labour_market/
 │   ├── 01_extract_corpus.R    # Extract corpus from DuckDB
 │   ├── 02_add_diagnostics.R   # Add keyword-match diagnostics
 │   ├── 03_analysis.qmd        # Descriptive analysis (frames, actors, sentiment)
-│   ├── 04_paper1_chatgpt_natural_experiment.qmd   # Earlier P1 draft
 │   ├── 04_working_paper_analysis.R                # Active P1 analysis
 │   ├── 04_working_paper_template.md               # Active P1 text
 │   ├── 04_build_working_paper.py                  # HTML and Word build
+│   ├── 04_export_working_paper.ps1                # Word to PDF export
 │   ├── 05_paper2_occupation_exposure_mismatch.qmd # P2: Salience mismatch
 │   └── 06_paper3_cross_platform_cascades.qmd      # P3: Platform cascades
 │
@@ -163,7 +163,6 @@ data/raw/ai_labour_corpus.rds
 data/processed/ai_labour_corpus_diagnostic.rds
     │
     ├──▶ 03_analysis.qmd        → Descriptive report
-    ├──▶ 04_paper1_*.qmd        → Earlier P1 draft
     ├──▶ 05_paper2_*.qmd        → P2: Occupation exposure mismatch
     └──▶ 06_paper3_*.qmd        → P3: Cross-platform cascades
 ```
@@ -191,17 +190,16 @@ make all            # runs the earlier Quarto pipeline
 Rscript R/01_extract_corpus.R       # extract corpus from DuckDB
 Rscript R/02_add_diagnostics.R      # add diagnostic columns
 quarto render R/03_analysis.qmd     # descriptive analysis
-quarto render R/04_paper1_chatgpt_natural_experiment.qmd # earlier P1 draft
 quarto render R/05_paper2_occupation_exposure_mismatch.qmd
 quarto render R/06_paper3_cross_platform_cascades.qmd
 
-# Render individual earlier Quarto papers
-make paper1         # earlier P1 draft
+# Render individual papers
+make paper1         # final Paper 1 (Windows with Microsoft Word)
 make paper2         # P2 only
 make paper3         # P3 only
 ```
 
-To rebuild the active P1 edition after preparing its extended corpus and analysis dependencies, run `R/04_working_paper_analysis.R`, `python R/04_build_working_paper.py`, then `R/04_export_working_paper.ps1` in PowerShell. The downloaded files above are already built; the proprietary corpus is not in Git.
+To rebuild Paper 1, use `make paper1` on Windows with Microsoft Word and the extended corpus available, or run `R/04_working_paper_analysis.R`, `python R/04_build_working_paper.py`, then `R/04_export_working_paper.ps1` in PowerShell. The downloadable files above are already built; the proprietary corpus is not in Git.
 
 ### Using Docker
 

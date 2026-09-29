@@ -2,7 +2,7 @@
 
 The requested deliverables are `ChatGPT_Croatia_Working_Paper.pdf`, `.html`, and `.docx` in this directory. They contain the same revised manuscript. The PDF is exported from the editable Word document. HTML embeds its charts and stylesheet and uses native MathML; Word equations use native Office Math.
 
-The original `R/04_paper1_chatgpt_natural_experiment.qmd` and its report are preserved. This edition is a separate substantive revision, with the descriptive title **After ChatGPT: Media Coverage of AI’s Labour-Market Implications in Croatia**. It is an independent working paper, not an NBER publication or an arXiv submission.
+This is the canonical Paper 1 edition, titled **After ChatGPT: Media Coverage of AI’s Labour-Market Implications in Croatia**. It replaces the earlier Quarto draft and report. It is an independent working paper, not an NBER publication or an arXiv submission.
 
 ## Rebuild
 
